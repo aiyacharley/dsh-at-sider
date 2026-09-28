@@ -94,7 +94,7 @@ window.__ModuleLoader__.load({
 .ats-filter{flex:none;width:128px;box-sizing:border-box;background:0 0;border:1px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-sm);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;padding:3px 8px}
 .ats-filter::placeholder{color:var(--dsw-alias-label-tertiary)}
 .ats-filter:focus-visible{outline:none;border-color:var(--dsw-alias-label-primary)}
-.ats-menuItem{width:100%;text-align:left;background:0 0;border:none;color:var(--dsw-alias-label-primary);cursor:pointer;font:inherit;padding:6px 12px;display:block}
+.ats-menuItem{width:100%;text-align:left;background:0 0;border:none;color:var(--dsw-alias-label-primary);cursor:pointer;font-family:inherit;font-size:var(--dsh-content-font-size-secondary,13px);line-height:1.5;padding:6px 12px;display:block}
 .ats-menuItem:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .ats-dim{color:var(--dsw-alias-label-tertiary);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .ats-tool{width:28px;height:28px;color:var(--dsw-alias-label-secondary);border-radius:var(--dsw-radius-sm);cursor:pointer;background:0 0;border:none;flex:none;justify-content:center;align-items:center;padding:6px;line-height:1;display:inline-flex}
@@ -937,6 +937,9 @@ window.__ModuleLoader__.load({
       const rowProps = {
         className: entry.type === 'other' ? `${css.row} ${css.other} ${css.otherRow}` : css.row,
         'data-at-sider-row': entry.type,
+        // Row-level identity for the reveal seek (the li carries the same path,
+        // but the flash must land on this element — the keyboard focus target).
+        'data-at-sider-treeitem': path,
       }
       if (entry.type !== 'other') {
         // R17 tree semantics: roving tabindex (the focused row is the only tab
@@ -1162,20 +1165,29 @@ window.__ModuleLoader__.load({
         const target = isAbsoluteWorkspacePath(reveal) ? reveal : childPath(cwd, reveal)
         const dirs = chainOf(cwd, target).filter((dir) => dir !== cwd)
         if (dirs.length > 0) setExpanded((previous) => Array.from(new Set([...previous, ...dirs])))
-        if (dirs.length > 0) setExpanded((previous) => Array.from(new Set([...previous, ...dirs])))
         if (typeof document === 'undefined') return
         let attempts = 0
         let poll = 0
         const seek = () => {
           attempts += 1
-          const row = document.querySelector(attrSelector('data-at-sider-path', reveal))
-          if (row !== null) {
-            if (typeof row.scrollIntoView === 'function') row.scrollIntoView({ block: 'center' })
-            row.classList.add(css.revealFlash)
-            window.setTimeout(() => row.classList.remove(css.revealFlash), 1600)
+          // Seek the ROW (the keyboard focus target), not its li: the flash
+          // must look exactly like the R17 focus ring.
+          const row = document.querySelector(attrSelector('data-at-sider-treeitem', reveal))
+          if (row === null) {
+            if (attempts < 20) poll = window.setTimeout(seek, 150)
             return
           }
-          if (attempts < 20) poll = window.setTimeout(seek, 150)
+          if (typeof row.scrollIntoView === 'function') row.scrollIntoView({ block: 'center' })
+          // The flash mirrors the focus ring; re-assert it during the window so
+          // a React re-render of the row cannot swallow the manual class.
+          let reassertions = 0
+          const reassert = () => {
+            row.classList.add(css.revealFlash)
+            reassertions += 1
+            if (reassertions < 4) window.setTimeout(reassert, 500)
+          }
+          reassert()
+          window.setTimeout(() => row.classList.remove(css.revealFlash), 1700)
         }
         seek()
         return () => window.clearTimeout(poll)

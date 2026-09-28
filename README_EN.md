@@ -18,6 +18,7 @@
 - [🚀 Install (two minutes)](#-install-two-minutes)
 - [What it does](#what-it-does)
 - [Interaction](#interaction)
+- [Keyboard and accessibility](#keyboard-and-accessibility)
 - [What stays native](#what-stays-native)
 - [How it works](#how-it-works)
 - [Known limitations](#known-limitations)
@@ -73,6 +74,8 @@ press `Mod+P`). Three checks:
 | size column | Regular files show a humanized size (`870 B`, `1.5 KB`, `1.2 MB`); the date's tooltip carries it, and the size's own tooltip gives the exact byte count. |
 | sorting | A header button cycles **name → modified time → size → type**; directories stay first, entries without the field sink to the end, and the mode is remembered (localStorage, best-effort). |
 | adaptive columns | The tree measures its own width in three tiers: ≥380px shows every column; 300–379px hides the size column; below 300px the chip collapses to a bare `@` and the date to `MM-DD HH:mm` — nothing gets clipped in narrow sidebars. |
+| runtime native fallback (R10) | **Right-click the Files tab** → "Use the native file tree": instantly switches back to the native tree (no plugin uninstall needed); the same entry becomes "Use the enhanced file tree" to switch back. Note: Harness tabs have **no ⋯ button — the entry point is the right-click menu**; the enhanced tree's expansion state is not kept across the switch, and a restart starts enhanced. |
+| reveal in file tree (R16) | **Right-click a file-preview tab** → "Reveal in file tree": focuses the tree, expands the ancestor directories, scrolls to the row and briefly highlights it (same outline as the keyboard focus ring). Only offered in the right-click menu of file-preview tabs — not on the Files tab or other tabs. |
 | icons | The host's own artwork, unchanged: `FileTypeIcon` + `classifyFileType` (category-coloured per file kind), the line-art folder icons, and `GuideArtworkFiles` for the guide capsule — the very components the native tree draws with. Inline glyphs take over only if those exports are unavailable. |
 | header | Workspace root path (full path on hover), an auto-refresh toggle, and a reload button. |
 | rows | Directories first, then natural case-insensitive name order — the native tree's own ordering. |
@@ -96,6 +99,27 @@ save in the workspace refreshes the open levels, with no polling.
   the full local time.
 - Directories expand level by level; reopening a level rereads it, and expansion
   plus scroll offset survive a switch to another sidebar tab.
+
+---
+
+## Keyboard and accessibility
+
+Click any row once to move focus into the tree; after that everything is keyboard-only:
+
+| Key | Behaviour |
+|---|---|
+| ↑ / ↓ | Move focus row by row across the visible rows (across levels) |
+| → | Collapsed directory → expand; expanded → focus the first child row |
+| ← | Expanded directory → collapse; file/child → focus the parent row |
+| Home / End | First / last visible row |
+| Enter / Space | Directory = expand/collapse; file = open in the sidebar |
+| `@` | Insert that row's reference into the composer |
+| Tab | Leaves the whole tree in one step (roving tabindex — no per-row stops) |
+
+Accessibility semantics: the root list is `role="tree"`, rows are
+`role="treeitem"` (with `aria-level` / `aria-expanded`), nested levels are
+`role="group"`, and the search result count is announced through a polite live
+region. The reveal highlight matches the keyboard focus ring.
 
 ---
 

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Polish: **the reveal highlight now lands on the row itself** and mirrors the
+  keyboard focus ring (2px outline in the label colour). Previously the flash
+  targeted the row's `<li>` and could be swallowed by a React re-render, so it
+  was not visible; the class is also re-asserted during the flash window.
+- Polish: the two tab-menu entries (runtime fallback, reveal) use the host's
+  content font size, matching native menu items such as 「关闭」.
+- Docs: the README documents the right-click gestures for both tab-menu entries
+  (Harness tabs have no ⋯ button), the reveal behaviour, and a keyboard +
+  accessibility reference.
 - Feature: **runtime toggle between the enhanced tree and the native one (R10)**
   — the Files tab's actions menu offers 「回退原生文件树」/「启用增强版文件树」:
   dropping the enhanced definition's registration makes the builtin body resume

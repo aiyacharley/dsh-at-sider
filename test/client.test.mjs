@@ -748,6 +748,7 @@ describe('rendering the tree', () => {
     const srcTreeitem = collect(srcRow, (node) => node.props?.role === 'treeitem')[0]
     assert.equal(srcTreeitem.props['aria-expanded'], true, 'the chain to the revealed file is expanded')
     assert.equal(srcTreeitem.props['aria-level'], 1)
+    assert.equal(srcTreeitem.props['data-at-sider-treeitem'], `${ROOT}/src`, 'the row itself is the reveal-seek target')
     const nested = collect(collect(srcRow, (node) => node.props?.role === 'group')[0], (node) => node.props?.['data-at-sider-path'] === `${ROOT}/src/find.ts`)
     assert.equal(nested.length, 1, 'the revealed file is rendered inside the group')
     // Timers were scheduled for the scroll polling but none fired in the shim.
@@ -1057,6 +1058,10 @@ describe('columns, widths, and sorting (R11–R13)', () => {
     assert.match(cssText, /\.ats-root\[data-at-sider-width="1"\] \.ats-mtimeLong\{display:none\}/)
     assert.match(cssText, /\.ats-root\[data-at-sider-width="1"\] \.ats-mtimeShort\{display:inline\}/)
     assert.match(cssText, /\.ats-mtimeShort\{display:none\}/, 'the short form is hidden at full width')
+    assert.match(cssText, /\.ats-revealFlash\{outline:2px solid var\(--dsw-alias-label-primary\);outline-offset:-2px\}/,
+      'the reveal flash mirrors the keyboard focus ring')
+    assert.match(cssText, /\.ats-menuItem\{[^}]*font-size:var\(--dsh-content-font-size-secondary,13px\)/,
+      'menu entries match the native menu font size')
     assert.equal(css.size, 'ats-size')
     assert.equal(css.word, 'ats-word')
     assert.equal(css.mtimeLong, 'ats-mtimeLong')
