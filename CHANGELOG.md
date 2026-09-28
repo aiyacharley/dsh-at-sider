@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.0.3
+
+- Feature: **size column** — regular files show a humanized size (`870 B`,
+  `1.5 KB`, `1.2 MB`) between the name and the date; the date's tooltip carries it
+  too (`full time · 1.2 MB`), and the size's own tooltip gives the exact byte
+  count.
+- Feature: **width-adaptive columns** — the tree measures its own body
+  (ResizeObserver) and picks a tier: ≥380px shows every column; 300–379px hides
+  the size column; below 300px the chip collapses to a bare `@` and the date to
+  `MM-DD HH:mm`. Both time shapes stay in the DOM and the stylesheet picks one, so
+  resizing never re-renders the tree.
+- Feature: **sortable rows** — a header button cycles 按名称 → 按修改时间 → 按大小 →
+  按类型; directories stay first, entries without the field sink to the end, and
+  the mode is remembered (localStorage, best-effort).
+- Tests: 46 — size formatting, width tiers, sort comparators, the header sort
+  cycle with persistence, tier CSS, and the chip's label/noun spans.
+
 ## 0.0.2
 
 - Fix: the modification-time column could be clipped at the row's right edge. The

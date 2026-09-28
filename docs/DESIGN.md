@@ -198,14 +198,16 @@ place:
 
 ## 8. Verification performed
 
-- `node --test test/host.test.mjs test/client.test.mjs` — 41 tests: containment
+- `node --test test/host.test.mjs test/client.test.mjs` — 46 tests: containment
   (including the sibling-prefix and `..` cases), per-entry `mtimeMs`, truncation,
   failure-code mapping, bounded concurrency; the route request/response contract;
   `apply()` registering exactly one authenticated POST route, and staying inert
   without Connection or the session registry; the artifact's loader registration;
   the takeover definition; mention grammar; resource addresses; listing transport
   failures; composer insertion and the clipboard fallback; the button's labels;
-  the host-artwork path and its fallback; the row's box model; and a rendered-tree
+  the host-artwork path and its fallback; the row's box model; size formatting,
+  width tiers, sort comparators, the header sort cycle with its persistence, and
+  the tier CSS; and a rendered-tree
   smoke test through a minimal React shim (rows, dates, `@` buttons, a directory
   click, a failure line, the no-workspace state, and both click paths).
 - `dsh --profile web --patch ./cordis.patch.yml --dump-config` — the patch layer

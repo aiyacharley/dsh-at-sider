@@ -70,6 +70,9 @@ press `Mod+P`). Three checks:
 | `@file` button (`@folder` on directories) | Inserts `@path` (or `@"path with spaces"`, `@dir/` for directories) into the session's composer as an atomic file reference — the same chip the built-in `@` completion and the built-in file drop produce. Falls back to copying the mention when no composer is reachable. Shown while the row is hovered or focused. |
 | `@file` + Alt/⌥-click | Always copies the mention to the clipboard. |
 | date column | `YYYY-MM-DD HH:mm` in local time; hover shows the full local date and time. Entries whose stat failed show nothing. |
+| size column | Regular files show a humanized size (`870 B`, `1.5 KB`, `1.2 MB`); the date's tooltip carries it, and the size's own tooltip gives the exact byte count. |
+| sorting | A header button cycles **name → modified time → size → type**; directories stay first, entries without the field sink to the end, and the mode is remembered (localStorage, best-effort). |
+| adaptive columns | The tree measures its own width in three tiers: ≥380px shows every column; 300–379px hides the size column; below 300px the chip collapses to a bare `@` and the date to `MM-DD HH:mm` — nothing gets clipped in narrow sidebars. |
 | icons | The host's own artwork, unchanged: `FileTypeIcon` + `classifyFileType` (category-coloured per file kind), the line-art folder icons, and `GuideArtworkFiles` for the guide capsule — the very components the native tree draws with. Inline glyphs take over only if those exports are unavailable. |
 | header | Workspace root path (full path on hover), an auto-refresh toggle, and a reload button. |
 | rows | Directories first, then natural case-insensitive name order — the native tree's own ordering. |
@@ -223,6 +226,10 @@ npm test          # node --test, 41 cases, fully offline (no network, no browser
 
 ## Version history
 
+- **v0.0.3** — new size column (humanized bytes + exact tooltip), sortable rows
+  (name/modified time/size/type cycle, directories first, remembered preference),
+  and width-adaptive columns (≥380px full / 300–379px no size / <300px bare `@` +
+  short time); 46 offline tests.
 - **v0.0.2** — fixed the clipped modification-time column (the row is
   `border-box` again); file/folder icons are the host's own artwork again
   (`FileTypeIcon` + `classifyFileType`, `IconFolder*Regular`,
@@ -235,7 +242,8 @@ npm test          # node --test, 41 cases, fully offline (no network, no browser
   level, 32 concurrent stats); 41 offline tests.
 
 > Per-version detail is in [git tags](https://github.com/aiyacharley/dsh-at-sider/tags);
-> design notes are in [docs/DESIGN.md](docs/DESIGN.md).
+> design notes are in [docs/DESIGN.md](docs/DESIGN.md); the roadmap (done/planned/milestones)
+> is [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ---
 

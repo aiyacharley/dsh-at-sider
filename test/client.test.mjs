@@ -27,7 +27,9 @@ function createReact() {
     createElement(type, props, ...children) {
       if (type === Fragment) return children.flat()
       if (typeof type === 'function') return type(props ?? {})
-      return { type, props: props ?? {}, children }
+      // React flattens nested child arrays; the shim must too, or tests that
+      // pass an array as a single child would see an extra nesting level.
+      return { type, props: props ?? {}, children: children.flat(Infinity) }
     },
     useState(initial) {
       const index = cursor
@@ -100,8 +102,25 @@ function fakePrimitives() {
   }
 }
 
+/** An in-memory localStorage stand-in, for the sort-preference tests. */
+function fakeStorage() {
+  const map = new Map()
+  return {
+    getItem: (key) => (map.has(key) ? map.get(key) : null),
+    setItem: (key, value) => { map.set(key, String(value)) },
+    entries: () => map,
+  }
+}
+
+/** The visible text of a shim element: spans flatten, strings pass through. */
+function textOf(node) {
+  if (Array.isArray(node)) return node.map(textOf).join('')
+  if (node === null || typeof node !== 'object') return String(node)
+  return node.children !== undefined ? textOf(node.children) : ''
+}
+
 /** Load the browser artifact and materialize its plugin, per test. */
-function loadPlugin({ fetchImpl, navigator: navigatorImpl, primitives } = {}) {
+function loadPlugin({ fetchImpl, navigator: navigatorImpl, primitives, storage } = {}) {
   const registrations = []
   const window = {
     __ModuleLoader__: { load: (registration) => registrations.push(registration) },
@@ -116,7 +135,7 @@ function loadPlugin({ fetchImpl, navigator: navigatorImpl, primitives } = {}) {
   }
   const navigatorValue = navigatorImpl ?? {}
   // The artifact is a script body, so it is evaluated the way the loader does it.
-  new Function('window', 'navigator', 'fetch', source)(window, navigatorValue, fetchFn)
+  new Function('window', 'navigator', 'fetch', 'localStorage', source)(window, navigatorValue, fetchFn, storage)
   assert.equal(registrations.length, 1, 'the artifact must register exactly one module')
   const [registration] = registrations
   const react = createReact()
@@ -408,8 +427,8 @@ describe('rendering the tree', () => {
   }
 
   /** Render FilesBody once, run its effects, let the listing land, and render again. */
-  async function renderBody({ services = {}, primitives } = {}) {
-    const { plugin, react, calls } = loadPlugin({ fetchImpl: ROW_FETCH, primitives })
+  async function renderBody({ services = {}, primitives, storage } = {}) {
+    const { plugin, react, calls } = loadPlugin({ fetchImpl: ROW_FETCH, primitives, storage })
     const { ctx } = fakeCtx(services)
     plugin.apply(ctx)
     const opened = []
@@ -446,6 +465,7 @@ describe('rendering the tree', () => {
     const root = collect(tree, (node) => node.props?.['data-at-sider-state'] === 'tree')
     assert.equal(root.length, 1)
     assert.equal(root[0].props['data-at-sider-root'], ROOT)
+    assert.equal(root[0].props['data-at-sider-width'], 3, 'full columns until a ResizeObserver measures narrower')
 
     const rows = collect(tree, (node) => node.props?.['data-at-sider-entry'] !== undefined)
     assert.deepEqual(rows.map((row) => row.props['data-at-sider-entry']), ['directory', 'other', 'file'])
@@ -453,15 +473,30 @@ describe('rendering the tree', () => {
 
     const dates = collect(tree, (node) => node.props?.['data-at-sider-mtime'] !== undefined)
     assert.equal(dates.length, 2, 'both a directory and a file carry a date')
-    assert.equal(dates[0].children[0], plugin.__internals.formatMtime(1735787045000))
-    assert.match(dates[0].children[0], /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/)
+    // The time span keeps both shapes in the DOM; the width tier picks one.
+    const long = dates[0].children[0]
+    const short = dates[0].children[1]
+    assert.equal(long.props.className, 'ats-mtimeLong')
+    assert.equal(long.children[0], plugin.__internals.formatMtime(1735787045000))
+    assert.match(long.children[0], /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/)
+    assert.equal(short.props.className, 'ats-mtimeShort')
+    assert.match(short.children[0], /^\d{2}-\d{2} \d{2}:\d{2}$/)
     assert.match(dates[0].props.title, /2025/)
+
+    // R11: the file row carries its humanized size; a directory (no size on the
+    // wire) and the un-openable entry show none.
+    const sizes = collect(tree, (node) => node.props?.['data-at-sider-size'] !== undefined)
+    assert.equal(sizes.length, 1)
+    assert.equal(sizes[0].props['data-at-sider-size'], 12)
+    assert.equal(sizes[0].children[0], '12 B')
+    assert.match(dates[1].props.title, /· 12 B$/, 'the file’s time tooltip carries the size')
+    assert.doesNotMatch(dates[0].props.title, /·/, 'a directory’s tooltip has no size')
 
     const refs = collect(tree, (node) => node.props?.['data-at-sider-ref'] !== undefined)
     assert.equal(refs.length, 2, 'the un-openable entry has no @ button')
     assert.deepEqual(refs.map((ref) => ref.props['data-at-sider-ref']), [`${ROOT}/src`, `${ROOT}/README.md`])
     // The affordance reads as a labelled reference, not a bare glyph.
-    assert.deepEqual(refs.map((ref) => ref.children[0]), ['@文件夹', '@文件'])
+    assert.deepEqual(refs.map((ref) => textOf(ref.children)), ['@文件夹', '@文件'])
   })
 
   it('opens a file through the tab and refuses nothing twice', async () => {
@@ -612,12 +647,17 @@ describe('rendering the tree', () => {
     }
     bare.apply(fakeCtx().ctx)
     const rows = bareReact.render(bare.__internals.components.RefButton, refProps)
-    assert.equal(rows.tree.children[0], '@文件', 'the idle label reads as a reference')
+    assert.equal(textOf(rows.tree.children), '@文件', 'the idle label reads as a reference')
+    // The noun is its own span so the narrow width tier can collapse to `@`.
+    const glyph = rows.tree.children.find((child) => child.props?.className === undefined)
+    const word = rows.tree.children.find((child) => child.props?.className === 'ats-word')
+    assert.equal(textOf([glyph]), '@')
+    assert.equal(textOf([word]), '文件')
     await rows.tree.props.onClick({ preventDefault: () => {}, stopPropagation: () => {}, altKey: false })
     await rows.tree.props.onClick({ preventDefault: () => {}, stopPropagation: () => {}, altKey: true })
     assert.deepEqual(copied, ['@README.md', '@README.md'])
     const after = bareReact.render(bare.__internals.components.RefButton, refProps)
-    assert.equal(after.tree.children[0], '已复制', 'the outcome replaces the label, then reverts')
+    assert.equal(textOf(after.tree.children), '已复制', 'the outcome replaces the label, then reverts')
 
     // A directory gets its own noun; a fresh instance so the flash state is idle.
     const fresh = loadPlugin({ fetchImpl: ROW_FETCH })
@@ -628,6 +668,112 @@ describe('rendering the tree', () => {
       path: `${ROOT}/src`,
       entry: { name: 'src', type: 'directory', mtimeMs: 1 },
     })
-    assert.equal(folder.tree.children[0], '@文件夹')
+    assert.equal(textOf(folder.tree.children), '@文件夹')
+  })
+
+  it('sorts by the chosen mode in the rendered tree and remembers the mode', async () => {
+    const storage = fakeStorage()
+    const { tree, plugin, react, props } = await renderBody({ storage })
+    const rowsOf = (nodes) => collect(nodes, (node) => node.props?.['data-at-sider-entry'] !== undefined)
+      .map((row) => row.props['data-at-sider-path'])
+    const sortButtonIn = (nodes) => collect(nodes, (node) => node.props?.['data-at-sider-sort'] !== undefined)[0]
+    const event = { preventDefault: () => {}, stopPropagation: () => {} }
+
+    // Default: directories first, then natural name order.
+    assert.deepEqual(rowsOf(tree), [`${ROOT}/src`, `${ROOT}/pipe`, `${ROOT}/README.md`])
+    assert.equal(sortButtonIn(tree).props['data-at-sider-sort'], 'name')
+    assert.match(sortButtonIn(tree).props.title, /按名称/)
+
+    // One click: name → time. Within files, the newest is first.
+    sortButtonIn(tree).props.onClick(event)
+    let pass = react.render(plugin.__internals.components.FilesBody, props)
+    assert.deepEqual(rowsOf(pass.tree), [`${ROOT}/src`, `${ROOT}/README.md`, `${ROOT}/pipe`],
+      'README.md (older) still precedes the never-modified entry')
+    assert.equal(sortButtonIn(pass.tree).props['data-at-sider-sort'], 'time')
+    assert.equal(storage.entries().get(plugin.__internals.SORT_STORAGE_KEY), 'time', 'the mode is remembered')
+
+    // A fresh materialization starts from the remembered mode.
+    const again = loadPlugin({ fetchImpl: ROW_FETCH, storage })
+    again.plugin.apply(fakeCtx().ctx)
+    const reloaded = again.react.render(again.plugin.__internals.components.FilesBody, props)
+    assert.equal(sortButtonIn(reloaded.tree).props['data-at-sider-sort'], 'time')
+
+    // The full cycle walks back to name through size and type.
+    for (const expected of ['size', 'type', 'name']) {
+      sortButtonIn(pass.tree).props.onClick(event)
+      pass = react.render(plugin.__internals.components.FilesBody, props)
+      assert.equal(sortButtonIn(pass.tree).props['data-at-sider-sort'], expected)
+      assert.equal(storage.entries().get(plugin.__internals.SORT_STORAGE_KEY), expected)
+    }
+  })
+})
+
+describe('columns, widths, and sorting (R11–R13)', () => {
+  const internals = () => loadPlugin().plugin.__internals
+
+  it('humanizes byte counts', () => {
+    const api = internals()
+    assert.equal(api.formatSize(0), '0 B')
+    assert.equal(api.formatSize(870), '870 B')
+    assert.equal(api.formatSize(1023), '1023 B')
+    assert.equal(api.formatSize(1024), '1 KB')
+    assert.equal(api.formatSize(1536), '1.5 KB')
+    assert.equal(api.formatSize(2048), '2 KB', 'the trailing .0 is trimmed')
+    assert.equal(api.formatSize(1024 * 1024), '1 MB')
+    assert.equal(api.formatSize(3.4 * 1024 * 1024), '3.4 MB')
+    assert.equal(api.formatSize(1024 ** 5), '1 PB')
+    assert.equal(api.formatSize(undefined), '')
+    assert.equal(api.formatSize(-5), '')
+    assert.equal(api.formatSize(Number.NaN), '')
+  })
+
+  it('picks the column tier from the measured body width', () => {
+    const api = internals()
+    assert.equal(api.widthTier(299), 1, 'below 300: bare @ chip, short time, no size')
+    assert.equal(api.widthTier(300), 2)
+    assert.equal(api.widthTier(379), 2, '300–379: labelled chip + full time, no size')
+    assert.equal(api.widthTier(380), 3, 'from 380: every column')
+    assert.equal(api.widthTier(1200), 3)
+    assert.equal(api.widthTier(undefined), 3, 'an unmeasurable body keeps every column')
+  })
+
+  it('cycles sort modes and keeps directories first', () => {
+    const api = internals()
+    assert.deepEqual(api.SORT_KEYS, ['name', 'time', 'size', 'type'])
+    assert.equal(api.nextSort('name'), 'time')
+    assert.equal(api.nextSort('time'), 'size')
+    assert.equal(api.nextSort('size'), 'type')
+    assert.equal(api.nextSort('type'), 'name')
+    assert.equal(api.nextSort('bogus'), 'name', 'an unknown mode re-enters the cycle at name')
+
+    const entries = [
+      { name: 'b.txt', type: 'file', mtimeMs: 100, size: 10 },
+      { name: 'zdir', type: 'directory', mtimeMs: 300 },
+      { name: 'a10.log', type: 'file', mtimeMs: 200, size: 50 },
+      { name: 'a2.log', type: 'file', mtimeMs: 400, size: 5 },
+    ]
+    assert.deepEqual(api.orderEntries(entries, 'name').map((entry) => entry.name),
+      ['zdir', 'a2.log', 'a10.log', 'b.txt'], 'directories first, then natural name order')
+    assert.deepEqual(api.orderEntries(entries, 'time').map((entry) => entry.name),
+      ['zdir', 'a2.log', 'a10.log', 'b.txt'], 'files newest first (400/200/100)')
+    assert.deepEqual(api.orderEntries(entries, 'size').map((entry) => entry.name),
+      ['zdir', 'a10.log', 'b.txt', 'a2.log'], 'files largest first (50/10/5)')
+    assert.deepEqual(api.orderEntries(entries, 'type').map((entry) => entry.name),
+      ['zdir', 'a2.log', 'a10.log', 'b.txt'], 'kind rank, then extension group, then name')
+    assert.deepEqual(api.orderEntries(entries, 'bogus').map((entry) => entry.name),
+      api.orderEntries(entries, 'name').map((entry) => entry.name), 'an unknown mode falls back to name')
+  })
+
+  it('drops columns through the width tiers in CSS', () => {
+    const { cssText, css } = internals()
+    assert.match(cssText, /\.ats-root\[data-at-sider-width="1"\] \.ats-size,\.ats-root\[data-at-sider-width="2"\] \.ats-size\{display:none\}/)
+    assert.match(cssText, /\.ats-root\[data-at-sider-width="1"\] \.ats-ref \.ats-word\{display:none\}/)
+    assert.match(cssText, /\.ats-root\[data-at-sider-width="1"\] \.ats-mtimeLong\{display:none\}/)
+    assert.match(cssText, /\.ats-root\[data-at-sider-width="1"\] \.ats-mtimeShort\{display:inline\}/)
+    assert.match(cssText, /\.ats-mtimeShort\{display:none\}/, 'the short form is hidden at full width')
+    assert.equal(css.size, 'ats-size')
+    assert.equal(css.word, 'ats-word')
+    assert.equal(css.mtimeLong, 'ats-mtimeLong')
+    assert.equal(css.mtimeShort, 'ats-mtimeShort')
   })
 })

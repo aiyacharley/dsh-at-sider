@@ -62,6 +62,9 @@ dsh plugin --profile web add dsh-at-sider@latest
 | `@文件` 按钮（目录为 `@文件夹`） | 把 `@路径`（含空格时 `@"路径"`，目录为 `@目录/`）作为原子文件引用插入当前会话输入框 —— 与内置 `@` 补全、内置拖入文件生成的引用完全一致。输入框不可达时自动降级为复制该引用文本。平时只在该行悬停/聚焦时出现。 |
 | `@文件` + Alt/⌥ 单击 | 始终复制引用文本到剪贴板。 |
 | 修改时间列 | 本地时间 `YYYY-MM-DD HH:mm`；悬停显示完整本地时间。stat 失败的条目该列留空。 |
+| 大小列 | 常规文件显示人性化大小（`870 B`、`1.5 KB`、`1.2 MB`）；时间 tooltip 一并给出，大小列悬停显示精确字节数。 |
+| 排序 | 页头按钮循环 **按名称 → 按修改时间 → 按大小 → 按类型**；目录始终在前，缺字段的条目沉底，偏好会记住（localStorage，尽力而为）。 |
+| 自适应列 | 树体自测宽度分三档：≥380px 全列；300–379px 隐藏大小列；<300px 收起为 `@` + `MM-DD HH:mm`——窄侧栏不再出现内容被裁切。 |
 | 图标 | 沿用宿主原生图标，未做改动：`FileTypeIcon` + `classifyFileType`（按文件类型着色）、线性风文件夹图标、引导页胶囊的 `GuideArtworkFiles` —— 与原生树绘制所用组件完全一致。仅当这些导出不可用时，才回退到插件自带的简单字形。 |
 | 页头 | 工作区根路径（悬停见全路径）、自动刷新开关、重新读取按钮。 |
 | 行序 | 目录优先，其后按名称自然序（大小写不敏感）—— 与原生树一致。 |
@@ -177,10 +180,11 @@ npm test          # node --test，41 个用例，全离线（无网络、无浏�
 
 ## 版本历史
 
+- **v0.0.3** — 新增大小列（人性化字节 + 精确 tooltip）、排序（名称/修改时间/大小/类型循环，目录恒在前，偏好记忆）、宽度自适应列（≥380px 全列 / 300–379px 隐大小 / <300px 收起为 `@` + 短时间）；46 个离线测试。
 - **v0.0.2** — 修复修改时间列被裁切（行改回 `border-box`）；文件/目录图标恢复为宿主原生图标（`FileTypeIcon` + `classifyFileType`、`IconFolder*Regular`、`GuideArtworkFiles`），自带字形仅作兜底；README 结构对齐 dsh-pubmed（中文主文档 + `README_EN.md` + npm/listing badge）。
 - **v0.0.1** — 首个版本：以 `extension` 接管 `files` tab，行内 `@文件`/`@文件夹` 引用按钮 + 行尾修改时间列；Host 半 `/api/dsh-at-sider/list` 列表路由（工作区受限、2000 条上限、32 并发）；41 个离线测试。
 
-> 逐版提交细节见 [git tags](https://github.com/aiyacharley/dsh-at-sider/tags)；设计文档见 [docs/DESIGN.md](docs/DESIGN.md)。
+> 逐版提交细节见 [git tags](https://github.com/aiyacharley/dsh-at-sider/tags)；设计文档见 [docs/DESIGN.md](docs/DESIGN.md)；路线图（已完成/计划/里程碑）见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
 ---
 

@@ -74,6 +74,12 @@ window.__ModuleLoader__.load({
 .ats-ref:hover{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover);border-color:var(--dsw-alias-border-l3)}
 .ats-ref.ats-refFlash{opacity:1;color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-border-l3)}
 .ats-mtime{margin-left:auto;flex:none;white-space:nowrap;font-size:11px;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-tertiary)}
+.ats-size{flex:none;white-space:nowrap;font-size:11px;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-tertiary)}
+.ats-mtimeShort{display:none}
+.ats-root[data-at-sider-width="1"] .ats-size,.ats-root[data-at-sider-width="2"] .ats-size{display:none}
+.ats-root[data-at-sider-width="1"] .ats-ref .ats-word{display:none}
+.ats-root[data-at-sider-width="1"] .ats-mtimeLong{display:none}
+.ats-root[data-at-sider-width="1"] .ats-mtimeShort{display:inline}
 .ats-tool{width:28px;height:28px;color:var(--dsw-alias-label-secondary);border-radius:var(--dsw-radius-sm);cursor:pointer;background:0 0;border:none;flex:none;justify-content:center;align-items:center;padding:6px;line-height:1;display:inline-flex}
 .ats-tool svg{width:15px;height:15px}
 .ats-tool:hover,.ats-tool[aria-pressed=true]{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}
@@ -100,7 +106,11 @@ window.__ModuleLoader__.load({
       otherRow: 'ats-otherRow',
       ref: 'ats-ref',
       refFlash: 'ats-refFlash',
+      word: 'ats-word',
+      size: 'ats-size',
       mtime: 'ats-mtime',
+      mtimeLong: 'ats-mtimeLong',
+      mtimeShort: 'ats-mtimeShort',
       tool: 'ats-tool',
       note: 'ats-note',
       status: 'ats-status',
@@ -123,16 +133,102 @@ window.__ModuleLoader__.load({
     /** Natural, case-insensitive name order, so `file2` precedes `file10`. */
     const byName = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
 
+    /** Compare two names naturally. */
+    function compareByName(left, right) {
+      return byName.compare(left.name, right.name)
+    }
+
+    /** Keep directories first, then order the non-directories with `byFiles`. */
+    function dirsFirst(byFiles) {
+      return (left, right) => {
+        const group = Number(right.type === 'directory') - Number(left.type === 'directory')
+        return group !== 0 ? group : byFiles(left, right)
+      }
+    }
+
+    /** Numeric sort key that sends entries without the field to the very end. */
+    function numericKey(entry, field) {
+      const value = entry[field]
+      return typeof value === 'number' && Number.isFinite(value) ? value : Number.NEGATIVE_INFINITY
+    }
+
+    /** The file's extension, lower-cased; `''` when the name has none. */
+    function extensionOf(name) {
+      const dot = typeof name === 'string' ? name.lastIndexOf('.') : -1
+      return dot > 0 ? name.slice(dot + 1).toLowerCase() : ''
+    }
+
+    const TYPE_RANK = { directory: 0, file: 1, other: 2 }
+
     /**
-     * Order one level for display: directories first, then by name.
-     * @param {readonly { name: string, type: string }[]} entries - listed entries.
+     * Display comparators. Directories stay first in every mode (the tree's own
+     * feel), except that `type` orders by the entry kind itself — which puts
+     * directories first anyway. `time`/`size` are descending; entries without
+     * the field sink to the end, ties break by name.
+     */
+    const SORTERS = {
+      name: dirsFirst(compareByName),
+      time: dirsFirst((left, right) => numericKey(right, 'mtimeMs') - numericKey(left, 'mtimeMs') || compareByName(left, right)),
+      size: dirsFirst((left, right) => numericKey(right, 'size') - numericKey(left, 'size') || compareByName(left, right)),
+      type: (left, right) => (TYPE_RANK[left.type] ?? 9) - (TYPE_RANK[right.type] ?? 9)
+        || byName.compare(extensionOf(left.name), extensionOf(right.name))
+        || compareByName(left, right),
+    }
+
+    /** The sort modes in cycle order, and the default. */
+    const SORT_KEYS = ['name', 'time', 'size', 'type']
+    const SORT_DEFAULT = 'name'
+    const SORT_STORAGE_KEY = 'dsh-at-sider:sort'
+
+    /** The next mode after `sort` in the header button's cycle. */
+    function nextSort(sort) {
+      const at = SORT_KEYS.indexOf(sort)
+      return SORT_KEYS[(at === -1 ? 0 : at + 1) % SORT_KEYS.length]
+    }
+
+    /**
+     * The remembered sort mode, or the default. Storage is best-effort: a
+     * missing or refusing `localStorage` costs nothing but the memory.
+     */
+    function loadSortPref() {
+      try {
+        const value = localStorage?.getItem?.(SORT_STORAGE_KEY)
+        return SORT_KEYS.includes(value) ? value : SORT_DEFAULT
+      } catch {
+        return SORT_DEFAULT
+      }
+    }
+
+    /** Remember the sort mode; a refusing storage is silently ignored. */
+    function saveSortPref(sort) {
+      try {
+        localStorage?.setItem?.(SORT_STORAGE_KEY, sort)
+      } catch {
+        // private mode / quota / absent API: the preference just lives shorter
+      }
+    }
+
+    /**
+     * Order one level for display.
+     * @param {readonly { name: string, type: string, mtimeMs?: number, size?: number }[]} entries - listed entries.
+     * @param {string} [sort] - one of {@link SORT_KEYS}; defaults to name order.
      * @returns {object[]} a new, ordered array.
      */
-    function orderEntries(entries) {
-      return [...entries].sort((left, right) => {
-        const group = Number(right.type === 'directory') - Number(left.type === 'directory')
-        return group !== 0 ? group : byName.compare(left.name, right.name)
-      })
+    function orderEntries(entries, sort = SORT_DEFAULT) {
+      return [...entries].sort(SORTERS[sort] ?? SORTERS[SORT_DEFAULT])
+    }
+
+    /**
+     * Which column set fits the tree body's measured width.
+     * @param {number} px - the body's content-box width.
+     * @returns {number} 3 = everything (`@文件` + size + full time); 2 = hide the
+     *   size column; 1 = bare `@` chip + short `MM-DD HH:mm`.
+     */
+    function widthTier(px) {
+      if (typeof px !== 'number' || !Number.isFinite(px)) return 3
+      if (px >= 380) return 3
+      if (px >= 300) return 2
+      return 1
     }
 
     /**
@@ -158,6 +254,40 @@ window.__ModuleLoader__.load({
     function formatFullMtime(mtimeMs) {
       if (typeof mtimeMs !== 'number' || !Number.isFinite(mtimeMs)) return ''
       return new Date(mtimeMs).toLocaleString()
+    }
+
+    /** `MM-DD HH:mm` in local time: the narrow-width form. */
+    function formatMtimeShort(mtimeMs) {
+      if (typeof mtimeMs !== 'number' || !Number.isFinite(mtimeMs)) return ''
+      const date = new Date(mtimeMs)
+      const pad = (value) => String(value).padStart(2, '0')
+      return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+    }
+
+    /**
+     * Humanize a byte count: `870 B`, `1.5 KB`, `1.2 MB`… one decimal below 100,
+     * none above; `''` for anything that is not a usable count.
+     */
+    function formatSize(bytes) {
+      if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes < 0) return ''
+      if (bytes < 1024) return `${bytes} B`
+      const units = ['KB', 'MB', 'GB', 'TB', 'PB']
+      let value = bytes
+      let unit = 'B'
+      for (const next of units) {
+        value /= 1024
+        unit = next
+        if (value < 1024) break
+      }
+      const text = value >= 100 ? String(Math.round(value)) : value.toFixed(1).replace(/\.0$/, '')
+      return `${text} ${unit}`
+    }
+
+    /** A row's time tooltip: the full local time, plus the exact size when known. */
+    function mtimeTitle(mtimeMs, size) {
+      const time = formatFullMtime(mtimeMs)
+      const humanSize = formatSize(size)
+      return humanSize === '' ? time : `${time} · ${humanSize}`
     }
 
     /** Whether a path uses a Windows drive or UNC prefix. */
@@ -456,6 +586,14 @@ window.__ModuleLoader__.load({
         h('path', { d: 'M13.5 2.5v3.2h-3.2' }))
     }
 
+    /** The sort control's glyph: three bars of decreasing length. */
+    function SortIcon() {
+      return h('svg', svgProps(15),
+        h('path', { d: 'M3 4.5h10' }),
+        h('path', { d: 'M3 8h6.5' }),
+        h('path', { d: 'M3 11.5h3' }))
+    }
+
     /** The auto-refresh toggle's glyph: playing when on, paused when off. */
     function AutoRefreshIcon({ on }) {
       return h('svg', svgProps(15), on
@@ -506,7 +644,14 @@ window.__ModuleLoader__.load({
         }
         flash(await copyText(mention) ? 'copied' : 'failed')
       }
-      const label = state === 'idle' ? t(isDir ? 'ref.labelFolder' : 'ref.labelFile') : t(`ref.${state}`)
+      // Idle reads `@文件`/`@文件夹`; the noun is its own span so the narrow
+      // width tier can collapse the chip back to a bare `@` glyph.
+      const label = state === 'idle'
+        ? [
+            h('span', { key: 'glyph' }, '@'),
+            h('span', { key: 'word', className: css.word }, t(isDir ? 'ref.nounFolder' : 'ref.nounFile')),
+          ]
+        : t(`ref.${state}`)
       return h('button', {
         type: 'button',
         className: state === 'idle' ? css.ref : `${css.ref} ${css.refFlash}`,
@@ -544,13 +689,25 @@ window.__ModuleLoader__.load({
           t,
         }))
       }
+      if (entry.size !== undefined) {
+        children.push(h('span', {
+          key: 'size',
+          className: css.size,
+          title: t('size.exact', { n: Math.round(entry.size).toLocaleString() }),
+          'data-at-sider-size': entry.size,
+        }, formatSize(entry.size)))
+      }
       if (entry.mtimeMs !== undefined) {
+        // Both time shapes are always in the DOM; the width tier decides which
+        // one the stylesheet shows.
         children.push(h('span', {
           key: 'mtime',
           className: css.mtime,
-          title: formatFullMtime(entry.mtimeMs),
+          title: mtimeTitle(entry.mtimeMs, entry.size),
           'data-at-sider-mtime': entry.mtimeMs,
-        }, formatMtime(entry.mtimeMs)))
+        },
+        h('span', { key: 'long', className: css.mtimeLong }, formatMtime(entry.mtimeMs)),
+        h('span', { key: 'short', className: css.mtimeShort }, formatMtimeShort(entry.mtimeMs))))
       }
       const rowProps = {
         className: entry.type === 'other' ? `${css.row} ${css.other} ${css.otherRow}` : css.row,
@@ -649,7 +806,7 @@ window.__ModuleLoader__.load({
           'data-at-sider-code': level.failure.code,
         }, failureLine(t, level.failure))
       }
-      const entries = orderEntries(level.entries)
+      const entries = orderEntries(level.entries, props.sort)
       return h(React.Fragment, null,
         level.failure !== undefined && h('li', { className: css.note, 'data-at-sider-row': 'failed' }, failureLine(t, level.failure)),
         entries.length === 0 && h('li', { className: css.note, 'data-at-sider-row': 'empty' }, t('empty')),
@@ -680,6 +837,8 @@ window.__ModuleLoader__.load({
       const [autoRefresh, setAutoRefresh] = React.useState(true)
       const [revision, setRevision] = React.useState(0)
       const [expanded, setExpanded] = React.useState([])
+      const [sort, setSort] = React.useState(loadSortPref)
+      const [widthTierValue, setWidthTierValue] = React.useState(3)
       const bodyRef = React.useRef(null)
       const scrollRef = React.useRef(0)
       const memoryKey = `${tab.id}::${cwd ?? ''}`
@@ -697,6 +856,25 @@ window.__ModuleLoader__.load({
       React.useEffect(() => () => {
         scrollMemory.set(memoryKey, scrollRef.current)
       }, [memoryKey])
+      // R12: measure the tree body and let the stylesheet drop columns that no
+      // longer fit. ResizeObserver always fires once per observe(), so the tier
+      // is correct on the first paint after the body exists.
+      const hasWorkspace = cwd !== undefined
+      React.useEffect(() => {
+        const body = bodyRef.current
+        if (body === null || typeof ResizeObserver !== 'function') return undefined
+        const observer = new ResizeObserver((entries) => {
+          const width = entries[entries.length - 1]?.contentRect?.width
+          if (typeof width === 'number') setWidthTierValue(widthTier(width))
+        })
+        observer.observe(body)
+        return () => observer.disconnect()
+      }, [hasWorkspace])
+      const cycleSort = () => {
+        const next = nextSort(sort)
+        setSort(next)
+        saveSortPref(next)
+      }
       if (cwd === undefined) {
         return h('div', { className: css.status, 'data-at-sider-state': 'no-workspace' },
           h('p', { className: css.statusLine }, t('noWorkspace')))
@@ -715,36 +893,50 @@ window.__ModuleLoader__.load({
         onOpen,
         revision,
         autoRefresh,
+        sort,
         t,
       }
-      return h('div', { className: css.root, 'data-at-sider-state': 'tree', 'data-at-sider-root': cwd },
-        h('div', { className: css.header },
-          h('span', { className: css.path, title: cwd, 'data-at-sider-path': cwd }, cwd),
-          h('button', {
-            type: 'button',
-            className: css.tool,
-            'aria-label': t('autoRefresh'),
-            'aria-pressed': autoRefresh,
-            title: t(autoRefresh ? 'autoRefresh.disable' : 'autoRefresh.enable'),
-            'data-at-sider-auto-refresh': true,
-            onClick: () => setAutoRefresh((value) => !value),
-          }, h(AutoRefreshIcon, { on: autoRefresh })),
-          h('button', {
-            type: 'button',
-            className: css.tool,
-            'aria-label': t('reload'),
-            title: t('reload'),
-            'data-at-sider-reload': true,
-            onClick: () => setRevision((value) => value + 1),
-          }, h(RefreshIcon))),
-        h('div', {
-          ref: bodyRef,
-          className: css.body,
-          'data-at-sider-body': true,
-          onScroll: (event) => {
-            scrollRef.current = event.currentTarget.scrollTop
-          },
-        }, h('ul', { className: css.level }, h(Level, { ...tree, parent: cwd }))))
+      return h('div', {
+        className: css.root,
+        'data-at-sider-state': 'tree',
+        'data-at-sider-root': cwd,
+        'data-at-sider-width': widthTierValue,
+      },
+      h('div', { className: css.header },
+        h('span', { className: css.path, title: cwd, 'data-at-sider-path': cwd }, cwd),
+        h('button', {
+          type: 'button',
+          className: css.tool,
+          'aria-label': t('sort.label'),
+          title: `${t('sort.label')}：${t(`sort.${sort}`)}`,
+          'data-at-sider-sort': sort,
+          onClick: cycleSort,
+        }, h(SortIcon)),
+        h('button', {
+          type: 'button',
+          className: css.tool,
+          'aria-label': t('autoRefresh'),
+          'aria-pressed': autoRefresh,
+          title: t(autoRefresh ? 'autoRefresh.disable' : 'autoRefresh.enable'),
+          'data-at-sider-auto-refresh': true,
+          onClick: () => setAutoRefresh((value) => !value),
+        }, h(AutoRefreshIcon, { on: autoRefresh })),
+        h('button', {
+          type: 'button',
+          className: css.tool,
+          'aria-label': t('reload'),
+          title: t('reload'),
+          'data-at-sider-reload': true,
+          onClick: () => setRevision((value) => value + 1),
+        }, h(RefreshIcon))),
+      h('div', {
+        ref: bodyRef,
+        className: css.body,
+        'data-at-sider-body': true,
+        onScroll: (event) => {
+          scrollRef.current = event.currentTarget.scrollTop
+        },
+      }, h('ul', { className: css.level }, h(Level, { ...tree, parent: cwd }))))
     }
 
     /** The tab chip: our folder sheet followed by the tab's title. */
@@ -787,12 +979,18 @@ window.__ModuleLoader__.load({
       'autoRefresh.disable': '关闭自动刷新',
       'entry.other': '这不是文件或目录，没法打开。',
       'ref.insert': '引用这个文件',
-      'ref.labelFile': '@文件',
-      'ref.labelFolder': '@文件夹',
+      'ref.nounFile': '文件',
+      'ref.nounFolder': '文件夹',
       'ref.tip': '插入 @ 引用到输入框；按住 Alt 点击则复制引用文本',
       'ref.inserted': '已引用',
       'ref.copied': '已复制',
       'ref.failed': '失败',
+      'sort.label': '排序',
+      'sort.name': '按名称',
+      'sort.time': '按修改时间',
+      'sort.size': '按大小',
+      'sort.type': '按类型',
+      'size.exact': '精确大小：{n} 字节',
       'error.notFound': '这个目录不在了。可能已被移动或删除。',
       'error.notDirectory': '这不是一个目录。',
       'error.outsideWorkspace': '这个目录在工作区之外，侧栏不会读取它。',
@@ -816,12 +1014,18 @@ window.__ModuleLoader__.load({
       'autoRefresh.disable': 'Disable auto refresh',
       'entry.other': 'Not a file or a directory, so it cannot be opened.',
       'ref.insert': 'Reference this file',
-      'ref.labelFile': '@file',
-      'ref.labelFolder': '@folder',
+      'ref.nounFile': 'file',
+      'ref.nounFolder': 'folder',
       'ref.tip': 'Insert an @ reference into the composer; Alt-click to copy the mention instead',
       'ref.inserted': 'referenced',
       'ref.copied': 'copied',
       'ref.failed': 'failed',
+      'sort.label': 'Sort',
+      'sort.name': 'by name',
+      'sort.time': 'by modified time',
+      'sort.size': 'by size',
+      'sort.type': 'by type',
+      'size.exact': 'Exact size: {n} bytes',
       'error.notFound': 'That directory is gone. It may have been moved or deleted.',
       'error.notDirectory': 'That is not a directory.',
       'error.outsideWorkspace': 'That directory is outside the workspace, so the sidebar will not read it.',
@@ -869,11 +1073,20 @@ window.__ModuleLoader__.load({
         fileAddressFor,
         formatFullMtime,
         formatMtime,
+        formatMtimeShort,
+        formatSize,
         insertReference,
         listDirectory,
+        loadSortPref,
         mentionFor,
+        mtimeTitle,
+        nextSort,
         orderEntries,
         relativeToRoot,
+        saveSortPref,
+        widthTier,
+        SORT_KEYS,
+        SORT_STORAGE_KEY,
         components: { Entry, FilesBody, FilesTitle, Level, RefButton, FileIcon, FolderIcon, GuideIcon, TitleIcon },
         hostPrimitives: () => host,
       },
