@@ -33,6 +33,8 @@ window.__ModuleLoader__.load({
      * time; everything else arrives in slot props.
      */
     let pluginCtx
+    /** R10 toggle controls, filled in by `apply`; tests read them through `__internals`. */
+    const controls = {}
 
     /** This implementation's identity, and the key its body/title register under. */
     const ID = 'dsh-at-sider'
@@ -42,10 +44,14 @@ window.__ModuleLoader__.load({
     const NS = 'atSider'
     /** The Host route that serves the listing with modification times. */
     const ROUTE_PATH = '/api/dsh-at-sider/list'
+    /** The Host route that serves recursive file search (R15). */
+    const SEARCH_ROUTE_PATH = '/api/dsh-at-sider/search'
     /** How long a row's `@` button shows its outcome before returning to the glyph. */
     const FEEDBACK_MS = 1400
     /** Coalescing window for watch-driven rereads, so one save cannot thrash a level. */
     const REFRESH_DEBOUNCE_MS = 150
+    /** Keystroke debounce for the quick-filter box. */
+    const SEARCH_DEBOUNCE_MS = 200
     /** Self-heal budget for a `no-workspace` answer: the Host may still be resuming the Session. */
     const NO_WORKSPACE_RETRY_MS = 1200
     const NO_WORKSPACE_RETRY_MAX = 2
@@ -84,6 +90,13 @@ window.__ModuleLoader__.load({
 .ats-root[data-at-sider-width="1"] .ats-ref .ats-word{display:none}
 .ats-root[data-at-sider-width="1"] .ats-mtimeLong{display:none}
 .ats-root[data-at-sider-width="1"] .ats-mtimeShort{display:inline}
+.ats-revealFlash{outline:2px solid var(--dsw-alias-label-primary);outline-offset:-2px}
+.ats-filter{flex:none;width:128px;box-sizing:border-box;background:0 0;border:1px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-sm);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;padding:3px 8px}
+.ats-filter::placeholder{color:var(--dsw-alias-label-tertiary)}
+.ats-filter:focus-visible{outline:none;border-color:var(--dsw-alias-label-primary)}
+.ats-menuItem{width:100%;text-align:left;background:0 0;border:none;color:var(--dsw-alias-label-primary);cursor:pointer;font:inherit;padding:6px 12px;display:block}
+.ats-menuItem:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.ats-dim{color:var(--dsw-alias-label-tertiary);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .ats-tool{width:28px;height:28px;color:var(--dsw-alias-label-secondary);border-radius:var(--dsw-radius-sm);cursor:pointer;background:0 0;border:none;flex:none;justify-content:center;align-items:center;padding:6px;line-height:1;display:inline-flex}
 .ats-tool svg{width:15px;height:15px}
 .ats-tool:hover,.ats-tool[aria-pressed=true]{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}
@@ -121,6 +134,10 @@ window.__ModuleLoader__.load({
       status: 'ats-status',
       statusLine: 'ats-statusLine',
       titleIcon: 'ats-titleIcon',
+      filter: 'ats-filter',
+      menuItem: 'ats-menuItem',
+      dim: 'ats-dim',
+      revealFlash: 'ats-revealFlash',
     }
 
     /** Install the stylesheet once per document; unload leaves it for the next load to reuse. */
@@ -300,6 +317,11 @@ window.__ModuleLoader__.load({
       return /^[A-Za-z]:[/\\]/.test(value) || value.startsWith('\\\\')
     }
 
+    /** Whether a path is absolute in either spelling the Host accepts. */
+    function isAbsoluteWorkspacePath(path) {
+      return typeof path === 'string' && (path.startsWith('/') || isWindowsStylePath(path))
+    }
+
     /**
      * A path relative to the workspace root when it lives inside it, else the
      * path as given; `/`-separated either way, `''` for the root itself.
@@ -441,6 +463,63 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /** Accept one search match, dropping anything malformed. */
+    function matchOf(raw) {
+      if (typeof raw !== 'object' || raw === null) return undefined
+      const name = typeof raw.name === 'string' ? raw.name : undefined
+      const path = typeof raw.path === 'string' && raw.path !== '' ? raw.path : undefined
+      if (name === undefined || path === undefined) return undefined
+      const type = raw.type === 'directory' || raw.type === 'file' || raw.type === 'other' ? raw.type : 'other'
+      const match = { name, path, dir: typeof raw.dir === 'string' ? raw.dir : '', type }
+      if (typeof raw.mtimeMs === 'number' && Number.isFinite(raw.mtimeMs)) match.mtimeMs = raw.mtimeMs
+      if (typeof raw.size === 'number' && Number.isFinite(raw.size)) match.size = raw.size
+      return match
+    }
+
+    /**
+     * Recursive workspace search through the Host route (R15).
+     * @param {string} sessionId - the authorizing session.
+     * @param {string} query - the substring to look for.
+     * @returns {Promise<{ ok: true, value: object } | { ok: false, error: { code: string, message: string } }>} the matches.
+     */
+    async function searchWorkspace(sessionId, query) {
+      try {
+        const response = await fetch(SEARCH_ROUTE_PATH, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ sessionId, query }),
+          credentials: 'same-origin',
+        })
+        let payload
+        try {
+          payload = await response.json()
+        } catch {
+          return { ok: false, error: failureOf('unavailable', `HTTP ${response.status}`) }
+        }
+        if (typeof payload !== 'object' || payload === null) {
+          return { ok: false, error: failureOf('unavailable', `HTTP ${response.status}`) }
+        }
+        if (payload.ok === true) {
+          const matches = Array.isArray(payload.value?.matches) ? payload.value.matches.map(matchOf).filter((match) => match !== undefined) : undefined
+          if (matches === undefined) return { ok: false, error: failureOf('unavailable', 'malformed search reply') }
+          return {
+            ok: true,
+            value: { matches, truncated: payload.value.truncated === true },
+          }
+        }
+        const error = payload.error
+        return {
+          ok: false,
+          error: failureOf(
+            typeof error?.code === 'string' ? error.code : 'unavailable',
+            typeof error?.message === 'string' ? error.message : `HTTP ${response.status}`,
+          ),
+        }
+      } catch (cause) {
+        return { ok: false, error: failureOf('unavailable', cause instanceof Error ? cause.message : String(cause)) }
+      }
+    }
+
     /** Copy one mention to the clipboard; false when the browser refuses. */
     async function copyText(text) {
       try {
@@ -475,6 +554,164 @@ window.__ModuleLoader__.load({
       const addFiles = input?.addFiles
       if (typeof addFiles !== 'function') return false
       return addFiles.call(input, [reference], []) === true
+    }
+
+    /**
+     * One row's whole reference action, shared by the `@` button and the
+     * keyboard's `@` key: insert the mention into the composer, or copy it
+     * (Alt/⌥-click, or whenever no composer is reachable).
+     * @param {string} sessionId - the session whose composer receives the chip.
+     * @param {string | undefined} root - the session's workspace root.
+     * @param {string} path - the entry's absolute path.
+     * @param {{ name: string, type: string }} entry - the entry.
+     * @param {boolean} copyOnly - skip insertion and copy unconditionally.
+     * @returns {Promise<'inserted' | 'copied' | 'failed'>} the outcome.
+     */
+    async function performReference(sessionId, root, path, entry, copyOnly) {
+      const isDir = entry.type === 'directory'
+      const mention = mentionFor(root, path, isDir)
+      if (mention === undefined) return 'failed'
+      if (copyOnly !== true) {
+        let inserted = false
+        try {
+          inserted = insertReference(pluginCtx, sessionId, {
+            source: 'reference',
+            ref: mention,
+            label: isDir ? `${entry.name}/` : entry.name,
+            appearance: isDir ? 'folder' : 'file',
+            clipboardText: mention,
+          })
+        } catch {
+          inserted = false
+        }
+        if (inserted) return 'inserted'
+      }
+      return (await copyText(mention)) ? 'copied' : 'failed'
+    }
+
+    /**
+     * The workspace path of a `dsh-resource://file/session/<id>/<path>` address,
+     * or undefined for anything else (non-file resources, absolute addresses
+     * without a session, malformed ids).
+     * @param {unknown} address - the tab's content address.
+     * @returns {string | undefined} the decoded path.
+     */
+    function revealPathFromAddress(address) {
+      if (typeof address !== 'string') return undefined
+      const prefix = 'dsh-resource://file/session/'
+      if (!address.startsWith(prefix)) return undefined
+      const rest = address.slice(prefix.length)
+      const slash = rest.indexOf('/')
+      if (slash <= 0) return undefined
+      const encoded = rest.slice(slash + 1)
+      if (encoded === '') return undefined
+      try {
+        const path = encoded.split('/').map((segment) => decodeURIComponent(segment)).join('/')
+        return path === '' ? undefined : path
+      } catch {
+        return undefined
+      }
+    }
+
+    /**
+     * The `childPath`-key chain from `fromDir` down to `target`'s parent, or []
+     * when the target is outside it. Comparison is `/`-normalized; construction
+     * keeps the tree's own key form, so the produced keys match the rendered
+     * rows exactly.
+     * @param {string} fromDir - the directory the chain starts at.
+     * @param {string} target - the entry to reveal.
+     * @returns {string[]} the ancestor directory keys, top-down.
+     */
+    function chainOf(fromDir, target) {
+      const base = typeof fromDir === 'string' ? fromDir.replace(/\\/g, '/').replace(/\/+$/, '') : ''
+      const norm = typeof target === 'string' ? target.replace(/\\/g, '/') : ''
+      if (base === '' || norm === '' || norm === base || !norm.startsWith(`${base}/`)) return []
+      const segments = norm.slice(base.length + 1).split('/').filter((segment) => segment !== '')
+      segments.pop()
+      const chain = []
+      let current = fromDir
+      for (const segment of segments) {
+        current = childPath(current, segment)
+        chain.push(current)
+      }
+      return chain
+    }
+
+    /** Quote a value for an exact-match attribute selector. */
+    function attrSelector(name, value) {
+      return `[${name}="${String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"]`
+    }
+
+    /** R16: ask the sidebar to open (or focus) the enhanced tree and reveal `path`. */
+    function requestReveal(path) {
+      try {
+        const sidebarRight = pluginCtx?.sidebarRight
+          ?? (typeof pluginCtx?.get === 'function' ? pluginCtx.get('sidebarRight') : undefined)
+        if (typeof sidebarRight?.openTab === 'function') sidebarRight.openTab(KIND, { params: { reveal: path } })
+      } catch {
+        // navigation is best-effort: the menu simply closes
+      }
+    }
+
+    /** R16: the file-preview tab's "reveal in tree" menu entry. */
+    function RevealMenuItem({ tab, dismiss, t }) {
+      const path = revealPathFromAddress(tab?.contentId)
+      if (tab?.kind === KIND || path === undefined) return null
+      return h('button', {
+        type: 'button',
+        className: css.menuItem,
+        onClick: () => {
+          dismiss()
+          requestReveal(path)
+        },
+      }, t('menu.reveal'))
+    }
+
+    /**
+     * Roving keyboard navigation inside the tree (R17): focus the previous/next
+     * visible row, jump to the first/last one, or expand/collapse with the
+     * left/right arrows. Returns whether the key was handled.
+     * @param {KeyboardEvent} event - the row's keydown event.
+     * @param {{ isDir: boolean, isOpen: boolean, path: string, parent: string, onToggle: (path: string) => void }} info - the row's tree facts.
+     * @returns {boolean} whether the key was consumed.
+     */
+    function treeKeyDown(event, info) {
+      const key = event.key
+      if (key !== 'ArrowDown' && key !== 'ArrowUp' && key !== 'ArrowRight' && key !== 'ArrowLeft'
+        && key !== 'Home' && key !== 'End') return false
+      const row = event.currentTarget
+      const body = typeof row?.closest === 'function' ? row.closest('[data-at-sider-body]') : null
+      if (body === null || typeof body.querySelectorAll !== 'function') return false
+      const rows = Array.from(body.querySelectorAll('[role="treeitem"]'))
+      const index = rows.indexOf(row)
+      if (index === -1) return false
+      const focusRow = (target) => {
+        if (target !== undefined && target !== null && typeof target.focus === 'function') target.focus()
+      }
+      switch (key) {
+        case 'ArrowDown':
+          focusRow(rows[Math.min(index + 1, rows.length - 1)])
+          return true
+        case 'ArrowUp':
+          focusRow(rows[Math.max(index - 1, 0)])
+          return true
+        case 'Home':
+          focusRow(rows[0])
+          return true
+        case 'End':
+          focusRow(rows[rows.length - 1])
+          return true
+        case 'ArrowRight':
+          if (info.isDir && !info.isOpen) info.onToggle(info.path)
+          else focusRow(rows[Math.min(index + 1, rows.length - 1)])
+          return true
+        case 'ArrowLeft':
+          if (info.isDir && info.isOpen) info.onToggle(info.path)
+          else focusRow(rows.find((candidate) => candidate.getAttribute('data-at-sider-path') === info.parent))
+          return true
+        default:
+          return false
+      }
     }
 
     // ───────────────────────────── icons ─────────────────────────────
@@ -624,30 +861,7 @@ window.__ModuleLoader__.load({
       const onClick = async (event) => {
         event.preventDefault()
         event.stopPropagation()
-        const mention = mentionFor(root, path, isDir)
-        if (mention === undefined) {
-          flash('failed')
-          return
-        }
-        if (event.altKey !== true) {
-          let inserted = false
-          try {
-            inserted = insertReference(pluginCtx, sessionId, {
-              source: 'reference',
-              ref: mention,
-              label: isDir ? `${entry.name}/` : entry.name,
-              appearance: isDir ? 'folder' : 'file',
-              clipboardText: mention,
-            })
-          } catch {
-            inserted = false
-          }
-          if (inserted) {
-            flash('inserted')
-            return
-          }
-        }
-        flash(await copyText(mention) ? 'copied' : 'failed')
+        flash(await performReference(sessionId, root, path, entry, event.altKey === true))
       }
       // Idle reads `@文件`/`@文件夹`; the noun is its own span so the narrow
       // width tier can collapse the chip back to a bare `@` glyph.
@@ -671,7 +885,7 @@ window.__ModuleLoader__.load({
 
     /** One entry's row, and its children when it is an expanded directory. */
     function Entry(props) {
-      const { entry, parent, root, sessionId, expanded, onToggle, onOpen, revision, autoRefresh, t } = props
+      const { entry, parent, root, sessionId, expanded, onToggle, onOpen, revision, autoRefresh, focusedPath, setFocusedPath, onReference, depth, t } = props
       const path = childPath(parent, entry.name)
       const isDir = entry.type === 'directory'
       const isOpen = isDir && expanded.includes(path)
@@ -725,15 +939,30 @@ window.__ModuleLoader__.load({
         'data-at-sider-row': entry.type,
       }
       if (entry.type !== 'other') {
-        rowProps.role = 'button'
-        rowProps.tabIndex = 0
+        // R17 tree semantics: roving tabindex (the focused row is the only tab
+        // stop once focus has entered the tree), treeitem role, and full arrow
+        // navigation.
+        rowProps.role = 'treeitem'
+        rowProps['aria-level'] = depth
+        rowProps.tabIndex = focusedPath === undefined || focusedPath === path ? 0 : -1
+        rowProps.onFocus = (event) => {
+          if (event.target === event.currentTarget) setFocusedPath(path)
+        }
         rowProps['aria-expanded'] = isDir ? isOpen : undefined
         rowProps.onClick = () => (isDir ? onToggle(path) : onOpen(path))
         rowProps.onKeyDown = (event) => {
-          if (event.key !== 'Enter' && event.key !== ' ') return
-          event.preventDefault()
-          if (isDir) onToggle(path)
-          else onOpen(path)
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            if (isDir) onToggle(path)
+            else onOpen(path)
+            return
+          }
+          if (event.key === '@') {
+            event.preventDefault()
+            onReference(path, entry, false)
+            return
+          }
+          if (treeKeyDown(event, { isDir, isOpen, path, parent, onToggle })) event.preventDefault()
         }
       } else {
         rowProps['aria-disabled'] = 'true'
@@ -741,11 +970,12 @@ window.__ModuleLoader__.load({
       }
       return h('li', {
         className: css.item,
+        role: 'none',
         'data-at-sider-entry': entry.type,
         'data-at-sider-path': path,
       },
       h('div', rowProps, children),
-      isOpen && h('ul', { className: css.level }, h(Level, { ...props, parent: path })))
+      isOpen && h('ul', { className: css.level, role: 'group' }, h(Level, { ...props, depth: depth + 1, parent: path })))
     }
 
     /** One directory's rows: its state while reading, its entries once read. */
@@ -865,8 +1095,13 @@ window.__ModuleLoader__.load({
       const [expanded, setExpanded] = React.useState([])
       const [sort, setSort] = React.useState(loadSortPref)
       const [widthTierValue, setWidthTierValue] = React.useState(3)
+      const [query, setQuery] = React.useState('')
+      const [search, setSearch] = React.useState({ phase: 'idle', results: [], truncated: false })
+      const [focusedPath, setFocusedPath] = React.useState(undefined)
       const bodyRef = React.useRef(null)
       const scrollRef = React.useRef(0)
+      const searchTimer = React.useRef(0)
+      const searchSeq = React.useRef(0)
       const memoryKey = `${tab.id}::${cwd ?? ''}`
       React.useEffect(() => tab.actions.bindCommands({
         refresh: () => setRevision((value) => value + 1),
@@ -896,6 +1131,55 @@ window.__ModuleLoader__.load({
         observer.observe(body)
         return () => observer.disconnect()
       }, [hasWorkspace])
+      // R15: the quick filter — debounced search over the whole workspace while
+      // the query is non-empty; an empty query puts the tree back.
+      const trimmedQuery = query.trim()
+      React.useEffect(() => {
+        if (trimmedQuery === '') {
+          setSearch({ phase: 'idle', results: [], truncated: false })
+          return undefined
+        }
+        const seq = ++searchSeq.current
+        setSearch((previous) => ({ ...previous, phase: 'loading' }))
+        const timer = window.setTimeout(() => {
+          searchWorkspace(sessionId, trimmedQuery).then((result) => {
+            if (searchSeq.current !== seq) return
+            if (result.ok) setSearch({ phase: 'ready', results: result.value.matches, truncated: result.value.truncated })
+            else setSearch({ phase: 'failed', results: [], truncated: false, message: result.error.message })
+          })
+        }, SEARCH_DEBOUNCE_MS)
+        return () => window.clearTimeout(timer)
+      }, [trimmedQuery, sessionId])
+      // R16: reveal — an opened tab navigated here with `params.reveal` expands
+      // the ancestors and flashes the row (the row may still be loading, so the
+      // scroll retries for a while).
+      const navigation = tab.navigation
+      const reveal = typeof navigation?.params?.reveal === 'string' ? navigation.params.reveal : undefined
+      const revealRevision = navigation?.revision
+      React.useEffect(() => {
+        if (typeof reveal !== 'string' || reveal === '' || cwd === undefined) return
+        // The address's path is workspace-relative for in-workspace files.
+        const target = isAbsoluteWorkspacePath(reveal) ? reveal : childPath(cwd, reveal)
+        const dirs = chainOf(cwd, target).filter((dir) => dir !== cwd)
+        if (dirs.length > 0) setExpanded((previous) => Array.from(new Set([...previous, ...dirs])))
+        if (dirs.length > 0) setExpanded((previous) => Array.from(new Set([...previous, ...dirs])))
+        if (typeof document === 'undefined') return
+        let attempts = 0
+        let poll = 0
+        const seek = () => {
+          attempts += 1
+          const row = document.querySelector(attrSelector('data-at-sider-path', reveal))
+          if (row !== null) {
+            if (typeof row.scrollIntoView === 'function') row.scrollIntoView({ block: 'center' })
+            row.classList.add(css.revealFlash)
+            window.setTimeout(() => row.classList.remove(css.revealFlash), 1600)
+            return
+          }
+          if (attempts < 20) poll = window.setTimeout(seek, 150)
+        }
+        seek()
+        return () => window.clearTimeout(poll)
+      }, [reveal, revealRevision, cwd])
       const cycleSort = () => {
         const next = nextSort(sort)
         setSort(next)
@@ -911,25 +1195,52 @@ window.__ModuleLoader__.load({
       const onOpen = (path) => {
         tab.actions.openResource(fileAddressFor(sessionId, cwd, path))
       }
+      const onReference = (path, entry, copyOnly) => {
+        performReference(sessionId, cwd, path, entry, copyOnly)
+      }
+      const onPickDirectory = (path) => {
+        setQuery('')
+        setExpanded((previous) => Array.from(new Set([...previous, ...chainOf(cwd, path)])))
+      }
       const tree = {
         sessionId,
         root: cwd,
         expanded,
         onToggle,
         onOpen,
+        onReference,
+        onTreeNav: treeKeyDown,
+        focusedPath,
+        setFocusedPath,
         revision,
         autoRefresh,
         sort,
+        depth: 1,
         t,
       }
+      const searching = trimmedQuery !== ''
       return h('div', {
         className: css.root,
         'data-at-sider-state': 'tree',
         'data-at-sider-root': cwd,
         'data-at-sider-width': widthTierValue,
+        'data-at-sider-filtering': searching || undefined,
       },
       h('div', { className: css.header },
         h('span', { className: css.path, title: cwd, 'data-at-sider-path': cwd }, cwd),
+        h('input', {
+          className: css.filter,
+          type: 'text',
+          value: query,
+          placeholder: t('search.placeholder'),
+          'aria-label': t('search.aria'),
+          spellCheck: false,
+          'data-at-sider-filter': true,
+          onChange: (event) => setQuery(event.target.value),
+          onKeyDown: (event) => {
+            if (event.key === 'Escape') setQuery('')
+          },
+        }),
         h('button', {
           type: 'button',
           className: css.tool,
@@ -955,6 +1266,8 @@ window.__ModuleLoader__.load({
           'data-at-sider-reload': true,
           onClick: () => setRevision((value) => value + 1),
         }, h(RefreshIcon))),
+      h('span', { className: css.srOnly, 'aria-live': 'polite' },
+        searching && search.phase === 'ready' ? t('search.count', { n: String(search.results.length) }) : ''),
       h('div', {
         ref: bodyRef,
         className: css.body,
@@ -962,7 +1275,56 @@ window.__ModuleLoader__.load({
         onScroll: (event) => {
           scrollRef.current = event.currentTarget.scrollTop
         },
-      }, h('ul', { className: css.level }, h(Level, { ...tree, parent: cwd }))))
+      }, searching
+        ? h(SearchResults, {
+          phase: search.phase,
+          results: search.results,
+          truncated: search.truncated,
+          message: search.message,
+          cwd,
+          sessionId,
+          onOpen,
+          onPickDirectory,
+          t,
+        })
+        : h('ul', { className: css.level, role: 'tree', 'aria-label': t('tree.aria') }, h(Level, { ...tree, parent: cwd }))))
+    }
+
+    /** The quick-filter's result list (R15): flat matches over the whole workspace. */
+    function SearchResults({ phase, results, truncated, message, cwd, sessionId, onOpen, onPickDirectory, t }) {
+      if (phase === 'loading') {
+        return h('ul', { className: css.level, 'data-at-sider-search': 'loading' },
+          h('li', { className: css.note, 'data-at-sider-search-row': 'loading' }, t('search.searching')))
+      }
+      if (phase === 'failed') {
+        return h('ul', { className: css.level, 'data-at-sider-search': 'failed' },
+          h('li', { className: css.note, 'data-at-sider-search-row': 'failed' }, t('error.unavailable', { message })))
+      }
+      return h('ul', { className: css.level, role: 'listbox', 'aria-label': t('search.aria'), 'data-at-sider-search': 'ready' },
+        truncated && h('li', { className: css.note, 'data-at-sider-search-row': 'truncated' }, t('search.truncated')),
+        results.length === 0 && h('li', { className: css.note, 'data-at-sider-search-row': 'none' }, t('search.none')),
+        results.map((match) => h(ResultRow, { key: match.path, match, cwd, sessionId, onOpen, onPickDirectory, t })))
+    }
+
+    /** One quick-filter result: icon + name + dimmed directory, @ chip, open/pick on click. */
+    function ResultRow({ match, cwd, sessionId, onOpen, onPickDirectory, t }) {
+      const isDir = match.type === 'directory'
+      const dim = relativeToRoot(cwd, match.dir === '' ? cwd : match.dir)
+      const rowProps = {
+        className: css.row,
+        role: 'option',
+        'aria-selected': 'false',
+        'data-at-sider-result': match.type,
+        'data-at-sider-path': match.path,
+        onClick: () => (isDir ? onPickDirectory(match.path) : onOpen(match.path)),
+      }
+      return h('li', { className: css.item, 'data-at-sider-path': match.path },
+        h('div', rowProps,
+          h('span', { className: css.main, key: 'main' },
+            isDir ? h(FolderIcon, { open: false, className: css.icon }) : h(FileIcon, { name: match.name }),
+            h('span', { className: css.name, key: 'name' }, match.name),
+            dim !== '' && dim !== '.' ? h('span', { className: css.dim, key: 'dir', title: dim }, dim) : null),
+          h(RefButton, { key: 'ref', sessionId, root: cwd, path: match.path, entry: { name: match.name, type: match.type }, t })))
     }
 
     /** The tab chip: our folder sheet followed by the tab's title. */
@@ -1017,6 +1379,16 @@ window.__ModuleLoader__.load({
       'sort.size': '按大小',
       'sort.type': '按类型',
       'size.exact': '精确大小：{n} 字节',
+      'menu.fallback': '回退原生文件树',
+      'menu.enhance': '启用增强版文件树',
+      'menu.reveal': '在文件树中定位',
+      'search.placeholder': '搜索文件…',
+      'search.aria': '搜索工作区文件',
+      'search.searching': '正在搜索…',
+      'search.none': '没有匹配的文件。',
+      'search.truncated': '结果太多，只显示了一部分。',
+      'search.count': '找到 {n} 项',
+      'tree.aria': '工作区文件树',
       'error.notFound': '这个目录不在了。可能已被移动或删除。',
       'error.notDirectory': '这不是一个目录。',
       'error.outsideWorkspace': '这个目录在工作区之外，侧栏不会读取它。',
@@ -1052,6 +1424,16 @@ window.__ModuleLoader__.load({
       'sort.size': 'by size',
       'sort.type': 'by type',
       'size.exact': 'Exact size: {n} bytes',
+      'menu.fallback': 'Use the native file tree',
+      'menu.enhance': 'Use the enhanced file tree',
+      'menu.reveal': 'Reveal in file tree',
+      'search.placeholder': 'Search files…',
+      'search.aria': 'Search workspace files',
+      'search.searching': 'Searching…',
+      'search.none': 'No matching files.',
+      'search.truncated': 'Too many results, showing only some of them.',
+      'search.count': '{n} results',
+      'tree.aria': 'Workspace file tree',
       'error.notFound': 'That directory is gone. It may have been moved or deleted.',
       'error.notDirectory': 'That is not a directory.',
       'error.outsideWorkspace': 'That directory is outside the workspace, so the sidebar will not read it.',
@@ -1063,13 +1445,80 @@ window.__ModuleLoader__.load({
 
     const plugin = {
       name: ID,
-      inject: ['slots', 'locale', 'sidebarRightTabs', 'remote', 'remote.workspaceFiles'],
+      inject: ['slots', 'locale', 'sidebarRightTabs', 'sidebarRight', 'remote', 'remote.workspaceFiles'],
       apply(ctx) {
         installStyles()
         const t = ctx.locale.bind(NS)
         pluginCtx = ctx
+        // R10: the enhanced tree is a runtime-toggleable takeover. Dropping the
+        // definition's registration makes the builtin body resume immediately
+        // (extension semantics); re-registering brings the enhancement back.
+        let definitionDisposer = undefined
+        let enhancedActive = true
+        const registerEnhancedDefinition = () => {
+          if (definitionDisposer !== undefined) return
+          try {
+            definitionDisposer = ctx.sidebarRightTabs.register(definition(t))
+          } catch {
+            definitionDisposer = undefined
+          }
+        }
+        const unregisterEnhancedDefinition = () => {
+          if (definitionDisposer === undefined) return
+          const disposer = definitionDisposer
+          definitionDisposer = undefined
+          try {
+            disposer()
+          } catch {
+            // already gone: nothing to restore
+          }
+        }
+        const setEnhancedActive = (next) => {
+          if (next === enhancedActive) return
+          enhancedActive = next
+          if (next) registerEnhancedDefinition()
+          else unregisterEnhancedDefinition()
+        }
+        const isEnhancedActive = () => enhancedActive
+        controls.setEnhancedActive = setEnhancedActive
+        controls.isEnhancedActive = isEnhancedActive
+        /** R10: the tab-menu toggle between the enhanced tree and the builtin. */
+        const FallbackMenuItem = ({ tab, dismiss, t }) => {
+          if (tab?.kind !== KIND) return null
+          return h('button', {
+            type: 'button',
+            className: css.menuItem,
+            onClick: () => {
+              dismiss()
+              setEnhancedActive(!enhancedActive)
+            },
+          }, enhancedActive ? t('menu.fallback') : t('menu.enhance'))
+        }
+        ctx.effect(() => {
+          registerEnhancedDefinition()
+          return () => {
+            unregisterEnhancedDefinition()
+            enhancedActive = true
+          }
+        }, 'dsh-at-sider: files type takeover')
+        // R10/R16: the two tab-menu entries. The toggle is offered on the files
+        // tab itself; reveal is offered on file-preview tabs. Both read the tab
+        // they are given and hide themselves elsewhere.
+        ctx.effect(() => ctx.slots.inject('sidebar.right.tab.menu.item', () => {
+          ctx.slots.register({
+            name: 'sidebar.right.tab.menu.item',
+            id: `${ID}#toggle`,
+            order: 900,
+            locale: NS,
+          }, FallbackMenuItem)
+          ctx.slots.register({
+            name: 'sidebar.right.tab.menu.item',
+            id: `${ID}#reveal`,
+            order: 901,
+            locale: NS,
+          }, RevealMenuItem)
+        }), 'dsh-at-sider: tab menu items')
         ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-at-sider: dictionaries')
-        ctx.effect(() => ctx.sidebarRightTabs.register(definition(t)), 'dsh-at-sider: files type takeover')
         ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({
           name: 'sidebar.right.pane.tab',
           key: ID,
@@ -1115,7 +1564,17 @@ window.__ModuleLoader__.load({
         SORT_STORAGE_KEY,
         NO_WORKSPACE_RETRY_MS,
         NO_WORKSPACE_RETRY_MAX,
-        components: { Entry, FilesBody, FilesTitle, Level, RefButton, FileIcon, FolderIcon, GuideIcon, TitleIcon },
+        attrSelector,
+        chainOf,
+        controls,
+        matchOf,
+        performReference,
+        revealPathFromAddress,
+        requestReveal,
+        treeKeyDown,
+        SEARCH_ROUTE_PATH,
+        SEARCH_DEBOUNCE_MS,
+        components: { Entry, FilesBody, FilesTitle, Level, RefButton, FileIcon, FolderIcon, GuideIcon, TitleIcon, RevealMenuItem },
         hostPrimitives: () => host,
       },
     })

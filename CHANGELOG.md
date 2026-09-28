@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+- Feature: **runtime toggle between the enhanced tree and the native one (R10)**
+  — the Files tab's actions menu offers 「回退原生文件树」/「启用增强版文件树」:
+  dropping the enhanced definition's registration makes the builtin body resume
+  immediately (extension semantics), and the same entry brings the enhancement
+  back. No uninstall needed.
+- Feature: **quick filter / locate (R15)** — a header box searches the whole
+  workspace recursively through a new authenticated
+  `POST /api/dsh-at-sider/search` route (skips `node_modules`/`.git`, depth cap
+  12, 200 results). While the query is non-empty the result list replaces the
+  tree; every result carries an `@` chip, clicking a file opens it and clicking
+  a directory jumps back to the tree expanded at that folder.
+- Feature: **reveal in file tree (R16)** — file-preview tabs get a
+  「在文件树中定位」 menu entry that opens the tree with the ancestors expanded
+  and the row scrolled into view and briefly highlighted.
+- Feature: **keyboard navigation and tree semantics (R17)** — roving tabindex,
+  ArrowUp/Down to move, ArrowRight/Left to expand/collapse (and out to the
+  parent), Home/End, and `@` on the focused row to insert a reference;
+  `role="tree"`/`treeitem`/`group` with `aria-level` and a polite live region.
+- Tests: 63 — menu-item visibility, the runtime toggle, the search route end to
+  end (skip list, result cap, depth cap), the quick-filter UI with its
+  debounce, reveal expansion, tree semantics, and keyboard navigation.
+
 ## 0.0.4
 
 - Fix: a Files tab restored right after a restart showed

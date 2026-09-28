@@ -22,10 +22,20 @@ import { isAbsolute, join, resolve } from 'node:path'
 
 /** The exact route this plugin owns, under Connection's authenticated `/api` fence. */
 export const ROUTE_PATH = '/api/dsh-at-sider/list'
+/** The recursive file-search route (R15). */
+export const SEARCH_ROUTE_PATH = '/api/dsh-at-sider/search'
 /** Directory entries returned for one level; the rest is reported as `truncated`. */
 export const MAX_ENTRIES = 2000
 /** Bounded `stat` concurrency for one level, so a huge directory cannot serialize. */
 export const STAT_CONCURRENCY = 32
+/** Search result cap; the walk stops as soon as this many matches are known. */
+export const SEARCH_MAX_RESULTS = 200
+/** Search depth cap below the workspace root. */
+export const SEARCH_MAX_DEPTH = 12
+/** Search walk cap on visited directories, bounding the whole traversal. */
+export const SEARCH_MAX_DIRS = 4000
+/** Directory names the search walk never descends into. */
+export const SEARCH_SKIP_DIRS = ['node_modules', '.git']
 
 const NUL = String.fromCharCode(0)
 
@@ -254,6 +264,107 @@ export async function handleListRequest(request, deps) {
   }
 }
 
+/** Normalize a host path for the wire: `/` separators whatever the platform uses. */
+function toSlash(path) {
+  return path.replace(/\\/g, '/')
+}
+
+/**
+ * Recursively find entries whose name contains `query` (case-insensitive),
+ * starting at the workspace root. The walk is bounded three ways — depth, visited
+ * directories, and result count — and never descends into `node_modules`/`.git`
+ * or through directory symlinks (cycle safety). Only matches are stat'd.
+ * @param {string} root - absolute workspace root.
+ * @param {string} query - the substring to look for.
+ * @param {{ maxResults?: number, maxDepth?: number, maxDirs?: number }} [options] - test/override seams.
+ * @returns {Promise<{ root: string, query: string, matches: object[], truncated: boolean, visited: number }>} the matches.
+ * @throws {AtSiderError} `no-workspace` when the root is empty.
+ */
+export async function searchWorkspace(root, query, options = {}) {
+  const needle = typeof query === 'string' ? query.trim().toLowerCase() : ''
+  const startDir = resolveInsideWorkspace(root, root)
+  const maxResults = options.maxResults ?? SEARCH_MAX_RESULTS
+  const maxDepth = options.maxDepth ?? SEARCH_MAX_DEPTH
+  const maxDirs = options.maxDirs ?? SEARCH_MAX_DIRS
+  if (needle === '') {
+    return { root: toSlash(startDir), query: '', matches: [], truncated: false, visited: 0 }
+  }
+  const matches = []
+  let truncated = false
+  let visited = 0
+  const queue = [{ dir: startDir, depth: 0, display: '' }]
+  while (queue.length > 0) {
+    if (matches.length >= maxResults || visited >= maxDirs) {
+      truncated = true
+      break
+    }
+    const { dir, depth, display } = queue.shift()
+    visited += 1
+    let dirents
+    try {
+      dirents = await readdir(dir, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    for (const dirent of dirents) {
+      if (matches.length >= maxResults) {
+        truncated = true
+        break
+      }
+      const child = join(dir, dirent.name)
+      if (dirent.isDirectory() && depth < maxDepth && !SEARCH_SKIP_DIRS.includes(dirent.name.toLowerCase())) {
+        queue.push({ dir: child, depth: depth + 1, display: `${display}/${dirent.name}` })
+      }
+      if (dirent.name.toLowerCase().includes(needle)) {
+        const info = await stat(child).catch(() => undefined)
+        const type = info === undefined
+          ? kindOfDirent(dirent)
+          : info.isDirectory() ? 'directory' : info.isFile() ? 'file' : 'other'
+        const match = { name: dirent.name, path: toSlash(child), dir: display, type }
+        if (info !== undefined) {
+          match.mtimeMs = info.mtimeMs
+          if (info.isFile()) match.size = info.size
+        }
+        matches.push(match)
+      }
+    }
+  }
+  return { root: toSlash(startDir), query: needle, matches, truncated, visited }
+}
+
+/**
+ * Handle one search request. Exported for tests; the route below is its only caller.
+ * @param {Request} request - the buffered Fetch request.
+ * @param {{ getSessionRoot?: (sessionId: string) => Promise<string | undefined> | string | undefined }} deps - session lookup seam.
+ * @returns {Promise<Response>} the JSON reply.
+ */
+export async function handleSearchRequest(request, deps) {
+  let body
+  try {
+    body = await request.json()
+  } catch {
+    return failure('bad-request', 'body is not JSON', 400)
+  }
+  const record = typeof body === 'object' && body !== null ? body : {}
+  const sessionId = typeof record.sessionId === 'string' ? record.sessionId : ''
+  const query = typeof record.query === 'string' ? record.query : ''
+  if (sessionId === '') return failure('bad-request', 'missing sessionId', 400)
+  let root
+  try {
+    root = await deps.getSessionRoot(sessionId)
+  } catch {
+    root = undefined
+  }
+  if (root === undefined) return failure('no-workspace', 'The session has no workspace directory')
+  try {
+    const value = await searchWorkspace(root, query)
+    return jsonReply({ ok: true, value })
+  } catch (error) {
+    if (error instanceof AtSiderError) return failure(error.code, error.message)
+    return failure('unavailable', error instanceof Error ? error.message : String(error))
+  }
+}
+
 /**
  * Register the route for as long as Connection and the Session registry compose.
  * Missing services keep the plugin inert instead of failing the profile load.
@@ -278,12 +389,20 @@ export function apply(ctx) {
         }
       }),
     }
-    scope.effect(() => register({
-      path: ROUTE_PATH,
-      methods: ['POST'],
-      requestBody: 'buffered',
-      fetch: (request) => handleListRequest(request, deps),
-    }), 'dsh-at-sider: workspace listing route')
+    scope.effect(() => {
+      register({
+        path: ROUTE_PATH,
+        methods: ['POST'],
+        requestBody: 'buffered',
+        fetch: (request) => handleListRequest(request, deps),
+      })
+      register({
+        path: SEARCH_ROUTE_PATH,
+        methods: ['POST'],
+        requestBody: 'buffered',
+        fetch: (request) => handleSearchRequest(request, deps),
+      })
+    }, 'dsh-at-sider: workspace routes')
   })
 }
 
@@ -291,11 +410,13 @@ export function apply(ctx) {
 export const __internals = {
   AtSiderError,
   compareEntries,
+  handleSearchRequest,
   kindOfDirent,
   listDirectory,
   mapFsError,
   mapLimit,
   pathKey,
   resolveInsideWorkspace,
+  searchWorkspace,
   workspaceRootOf,
 }

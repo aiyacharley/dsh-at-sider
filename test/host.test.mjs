@@ -15,9 +15,12 @@ import {
   __internals,
   apply,
   handleListRequest,
+  handleSearchRequest,
   listDirectory,
   resolveInsideWorkspace,
   ROUTE_PATH,
+  SEARCH_ROUTE_PATH,
+  searchWorkspace,
 } from '../index.js'
 
 /** @type {string} */
@@ -80,7 +83,7 @@ describe('plugin.apply', () => {
     },
   })
 
-  it('registers exactly one authenticated POST route for a live composition', async () => {
+  it('registers the listing and search routes for a live composition', async () => {
     const routes = []
     const { ctx, injected } = fakeHostCtx({
       connection: connection(routes),
@@ -89,14 +92,17 @@ describe('plugin.apply', () => {
     apply(ctx)
 
     assert.deepEqual(injected, [['connection', 'sessions']])
-    assert.equal(routes.length, 1)
-    const [route] = routes
-    assert.equal(route.path, ROUTE_PATH)
-    assert.deepEqual(route.methods, ['POST'])
-    assert.equal(route.requestBody, 'buffered')
-    assert.equal(typeof route.fetch, 'function')
+    assert.equal(routes.length, 2)
+    const [listRoute, searchRoute] = routes
+    assert.equal(listRoute.path, ROUTE_PATH)
+    assert.equal(searchRoute.path, SEARCH_ROUTE_PATH)
+    for (const route of routes) {
+      assert.deepEqual(route.methods, ['POST'])
+      assert.equal(route.requestBody, 'buffered')
+      assert.equal(typeof route.fetch, 'function')
+    }
 
-    const response = await route.fetch(new Request(`http://127.0.0.1${ROUTE_PATH}`, {
+    const response = await listRoute.fetch(new Request(`http://127.0.0.1${ROUTE_PATH}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ sessionId: 's1', path: root }),
@@ -119,7 +125,7 @@ describe('plugin.apply', () => {
 
     const noSessions = fakeHostCtx({ connection: connection(routes) })
     apply(noSessions.ctx)
-    assert.equal(routes.length, 1, 'the route still registers; the session lookup refuses later')
+    assert.equal(routes.length, 2, 'the routes still register; the session lookup refuses later')
   })
 })
 
@@ -163,7 +169,7 @@ describe('cold-session fallback (restored tab right after a restart)', () => {
         callback({ get: (key) => services[key], effect: (fn) => { fn(); return () => {} } })
       },
     })
-    assert.equal(routes.length, 1)
+    assert.equal(routes.length, 2)
     const response = await routes[0].fetch(new Request(`http://127.0.0.1${ROUTE_PATH}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -310,5 +316,79 @@ describe('handleListRequest', () => {
     const broken = { json: async () => { throw new Error('boom') } }
     const response = await handleListRequest(broken, deps)
     assert.equal(response.status, 400)
+  })
+})
+
+describe('searchWorkspace (R15)', () => {
+  /** @type {string} */
+  let ws
+
+  before(async () => {
+    ws = join(await mkdtemp(join(tmpdir(), 'dsh-at-sider-search-')), 'ws')
+    await mkdir(join(ws, 'src', 'deep'), { recursive: true })
+    await mkdir(join(ws, 'node_modules', 'pkg'), { recursive: true })
+    await mkdir(join(ws, '.git'), { recursive: true })
+    await writeFile(join(ws, 'find-me-root.txt'), 'r')
+    await writeFile(join(ws, 'src', 'find-me.ts'), 'a')
+    await writeFile(join(ws, 'src', 'deep', 'also-find-me.md'), 'b')
+    await writeFile(join(ws, 'node_modules', 'pkg', 'find-me-hidden.mjs'), 'hidden')
+    await writeFile(join(ws, '.git', 'find-me-in-git'), 'hidden')
+  })
+
+  after(async () => {
+    await rm(dirnameOf(ws), { recursive: true, force: true })
+  })
+
+  it('finds matches at any depth and never descends into node_modules/.git', async () => {
+    const result = await searchWorkspace(ws, 'find-me')
+    assert.equal(result.truncated, false)
+    assert.deepEqual(result.matches.map((match) => `${match.dir}/${match.name}`).sort(), [
+      '/find-me-root.txt',
+      '/src/deep/also-find-me.md',
+      '/src/find-me.ts',
+    ])
+    assert.ok(result.matches.every((match) => typeof match.mtimeMs === 'number'))
+    assert.ok(result.matches.every((match) => !match.path.includes('.git') && !match.path.includes('node_modules')),
+      'the walk never reports entries from node_modules or .git')
+  })
+
+  it('is empty for a blank query without walking', async () => {
+    const result = await searchWorkspace(ws, '   ')
+    assert.deepEqual(result.matches, [])
+    assert.equal(result.visited, 0)
+  })
+
+  it('honors the result cap and reports truncation', async () => {
+    const result = await searchWorkspace(ws, 'find-me', { maxResults: 2 })
+    assert.equal(result.truncated, true)
+    assert.equal(result.matches.length, 2)
+  })
+
+  it('honors the depth cap', async () => {
+    const result = await searchWorkspace(ws, 'also-find-me', { maxDepth: 1 })
+    assert.equal(result.matches.length, 0, 'the only match sits two levels deep')
+  })
+
+  it('answers the search route end to end', async () => {
+    const response = await handleSearchRequest(new Request(`http://127.0.0.1${SEARCH_ROUTE_PATH}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId: 's1', query: 'find-me' }),
+    }), { getSessionRoot: () => ws })
+    const payload = await response.json()
+    assert.equal(payload.ok, true)
+    assert.equal(payload.value.matches.length, 3)
+    assert.equal(payload.value.truncated, false)
+  })
+
+  it('answers no-workspace for an unknown session', async () => {
+    const response = await handleSearchRequest(new Request(`http://127.0.0.1${SEARCH_ROUTE_PATH}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId: 'gone', query: 'find-me' }),
+    }), { getSessionRoot: () => undefined })
+    const payload = await response.json()
+    assert.equal(payload.ok, false)
+    assert.equal(payload.error.code, 'no-workspace')
   })
 })

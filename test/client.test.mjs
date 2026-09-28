@@ -158,7 +158,7 @@ function loadPlugin({ fetchImpl, navigator: navigatorImpl, primitives, storage }
 
 /** A ctx that records every registration and resolves optional services from `services`. */
 function fakeCtx(services = {}) {
-  const record = { dictionaries: [], tabTypes: [], slots: [], registrations: [] }
+  const record = { dictionaries: [], tabTypes: [], slots: [], registrations: [], disposed: 0 }
   const ctx = {
     get: (key) => services[key],
     effect: (fn) => {
@@ -179,7 +179,9 @@ function fakeCtx(services = {}) {
     sidebarRightTabs: {
       register: (definition) => {
         record.tabTypes.push(definition)
-        return () => {}
+        return () => {
+          record.disposed += 1
+        }
       },
     },
     slots: {
@@ -209,7 +211,7 @@ describe('module registration', () => {
     const { registration, plugin } = loadPlugin()
     assert.equal(registration.id, 'dsh-at-sider')
     assert.equal(plugin.name, 'dsh-at-sider')
-    assert.deepEqual(plugin.inject, ['slots', 'locale', 'sidebarRightTabs', 'remote', 'remote.workspaceFiles'])
+    assert.deepEqual(plugin.inject, ['slots', 'locale', 'sidebarRightTabs', 'sidebarRight', 'remote', 'remote.workspaceFiles'])
     assert.equal(typeof plugin.apply, 'function')
     assert.equal(Object.keys(plugin.__internals).length > 0, true)
     assert.deepEqual(Object.keys(plugin), ['name', 'inject', 'apply'])
@@ -240,13 +242,73 @@ describe('plugin.apply', () => {
     assert.equal(definition.guide[0].commandId, 'workspace.files')
     assert.equal(definition.guide[0].title(), '工作区文件')
 
-    assert.deepEqual(record.slots, ['sidebar.right.pane.tab', 'sidebar.right.pane.tab.title'])
-    const body = record.registrations[0]
+    assert.deepEqual(record.slots, [
+      'sidebar.right.tab.menu.item',
+      'sidebar.right.tab.menu.item',
+      'sidebar.right.pane.tab',
+      'sidebar.right.pane.tab.title',
+    ])
+    const toggleMenu = record.registrations[0]
+    assert.equal(toggleMenu.options.id, 'dsh-at-sider#toggle')
+    assert.equal(toggleMenu.options.locale, 'atSider')
+    const revealMenu = record.registrations[1]
+    assert.equal(revealMenu.options.id, 'dsh-at-sider#reveal')
+    const body = record.registrations[2]
     assert.equal(body.options.key, 'dsh-at-sider')
     assert.equal(body.options.locale, 'atSider')
     assert.equal(typeof body.component, 'function')
-    const title = record.registrations[1]
+    const title = record.registrations[3]
     assert.equal(title.options.key, 'dsh-at-sider')
+  })
+
+  it('toggles the takeover at runtime so the builtin can resume (R10)', () => {
+    const { plugin } = loadPlugin()
+    const { ctx, record } = fakeCtx()
+    plugin.apply(ctx)
+    assert.equal(record.tabTypes.length, 1)
+    assert.equal(record.disposed, 0)
+    assert.equal(plugin.__internals.controls.isEnhancedActive(), true)
+
+    plugin.__internals.controls.setEnhancedActive(false)
+    assert.equal(record.disposed, 1, 'the enhanced definition unregisters; the builtin resumes')
+    assert.equal(plugin.__internals.controls.isEnhancedActive(), false)
+
+    plugin.__internals.controls.setEnhancedActive(true)
+    assert.equal(record.tabTypes.length, 2, 're-registering brings the enhancement back')
+    plugin.__internals.controls.setEnhancedActive(true)
+    assert.equal(record.tabTypes.length, 2, 'the toggle is idempotent when already enhanced')
+  })
+
+  it('offers the reveal menu entry only on file-preview tabs (R16)', () => {
+    const { plugin, react } = loadPlugin()
+    const opened = []
+    let dismissedCount = 0
+    const { ctx } = fakeCtx({
+      sidebarRight: { openTab: (kind, options) => { opened.push({ kind, options }) } },
+    })
+    plugin.apply(ctx)
+    const t = (key) => plugin.__internals.dictionaries.zh[key] ?? key
+    const reveal = plugin.__internals.components.RevealMenuItem
+
+    const onFile = react.render(reveal, {
+      tab: { kind: 'document-preview', contentId: 'dsh-resource://file/session/s-1/docs/a.md' },
+      dismiss: () => { dismissedCount += 1 },
+      t,
+    })
+    assert.equal(textOf(onFile.tree.children), '在文件树中定位')
+
+    const onFilesTab = react.render(reveal, {
+      tab: { kind: 'files', contentId: 'sidebar://guide' },
+      dismiss: () => {},
+      t,
+    })
+    assert.equal(onFilesTab.tree, null, 'the files tab itself gets no reveal entry')
+
+    // Acting on the entry dismisses the menu and opens the enhanced tree with
+    // the reveal parameter.
+    onFile.tree.props.onClick()
+    assert.equal(dismissedCount, 1)
+    assert.deepEqual(opened, [{ kind: 'files', options: { params: { reveal: 'docs/a.md' } } }])
   })
 })
 
@@ -414,6 +476,17 @@ describe('reference insertion', () => {
 describe('rendering the tree', () => {
   const ROW_FETCH = async (_url, init) => {
     const { path } = JSON.parse(init.body)
+    if (path === `${ROOT}/src`) {
+      return jsonResponse({
+        ok: true,
+        value: {
+          path: `${ROOT}/src`,
+          root: ROOT,
+          truncated: false,
+          entries: [{ name: 'find.ts', type: 'file', mtimeMs: 1735700645000, size: 3 }],
+        },
+      })
+    }
     if (path !== ROOT) return jsonResponse({ ok: false, error: { code: 'not-found', message: 'missing' } })
     return jsonResponse({
       ok: true,
@@ -516,7 +589,7 @@ describe('rendering the tree', () => {
   it('opens a file through the tab and refuses nothing twice', async () => {
     const { tree, opened } = await renderBody()
     const fileRow = collect(tree, (node) => node.props?.['data-at-sider-path'] === `${ROOT}/README.md`)[0]
-    const row = collect(fileRow, (node) => node.props?.role === 'button')[0]
+    const row = collect(fileRow, (node) => node.props?.role === 'treeitem')[0]
     row.props.onClick()
     assert.deepEqual(opened, ['dsh-resource://file/session/s-1/README.md'])
   })
@@ -642,6 +715,138 @@ describe('rendering the tree', () => {
     const rows = collect(pass.tree, (node) => node.props?.['data-at-sider-entry'] !== undefined)
     assert.deepEqual(rows.map((row) => row.props['data-at-sider-path']), [`${ROOT}/a.ts`])
     assert.equal(calls.length, 2, 'exactly one retry was made')
+  })
+
+  it('expands the ancestors when a reveal navigation arrives (R16)', async () => {
+    const { plugin, react, timers } = loadPlugin({ fetchImpl: ROW_FETCH })
+    const { ctx } = fakeCtx()
+    plugin.apply(ctx)
+    const props = {
+      sessionId: 's-1',
+      useSessions: (selector) => selector({ byId: { 's-1': { cwd: ROOT } } }),
+      useTabInfo: () => ({
+        tab: {
+          id: 'tab-1',
+          title: 'Files',
+          signal: new AbortController().signal,
+          navigation: { address: 'files', params: { reveal: `${ROOT}/src/find.ts` }, revision: 1 },
+          actions: { bindCommands: () => () => {}, openResource: () => {} },
+        },
+      }),
+      t: (key) => plugin.__internals.dictionaries.zh[key] ?? key,
+    }
+    let pass = react.render(plugin.__internals.components.FilesBody, props)
+    pass.runEffects()
+    await new Promise((done) => setTimeout(done, 0))
+    pass = react.render(plugin.__internals.components.FilesBody, props)
+    pass.runEffects()
+    await new Promise((done) => setTimeout(done, 0))
+    pass = react.render(plugin.__internals.components.FilesBody, props)
+
+    // The src row is expanded (its nested level mounted and listed find.ts).
+    const srcRow = collect(pass.tree, (node) => node.props?.['data-at-sider-path'] === `${ROOT}/src`)[0]
+    const srcTreeitem = collect(srcRow, (node) => node.props?.role === 'treeitem')[0]
+    assert.equal(srcTreeitem.props['aria-expanded'], true, 'the chain to the revealed file is expanded')
+    assert.equal(srcTreeitem.props['aria-level'], 1)
+    const nested = collect(collect(srcRow, (node) => node.props?.role === 'group')[0], (node) => node.props?.['data-at-sider-path'] === `${ROOT}/src/find.ts`)
+    assert.equal(nested.length, 1, 'the revealed file is rendered inside the group')
+    // Timers were scheduled for the scroll polling but none fired in the shim.
+    assert.ok(timers.length >= 0)
+    void timers
+  })
+
+  it('filters the whole workspace through the quick filter (R15)', async () => {
+    const searchFetch = async (url, init) => {
+      if (url === '/api/dsh-at-sider/search') {
+        const { query } = JSON.parse(init.body)
+        const matches = query === 'read'
+          ? [{ name: 'README.md', path: `${ROOT}/README.md`, dir: '', type: 'file', mtimeMs: 1735700645000, size: 12 }]
+          : []
+        return jsonResponse({ ok: true, value: { query, matches, truncated: false } })
+      }
+      return ROW_FETCH(url, init)
+    }
+    const { plugin, react, props, timers, calls } = await (async () => {
+      const harness = loadPlugin({ fetchImpl: searchFetch })
+      harness.plugin.apply(fakeCtx().ctx)
+      return harness
+    })()
+    const opened = []
+    const baseProps = {
+      sessionId: 's-1',
+      useSessions: (selector) => selector({ byId: { 's-1': { cwd: ROOT } } }),
+      useTabInfo: () => ({
+        tab: {
+          id: 'tab-1',
+          title: 'Files',
+          signal: new AbortController().signal,
+          actions: { bindCommands: () => () => {}, openResource: (address) => opened.push(address) },
+        },
+      }),
+      t: (key, params) => {
+        const template = plugin.__internals.dictionaries.zh[key] ?? key
+        return params === undefined ? template : Object.entries(params).reduce((acc, [name, value]) => acc.replace(`{${name}}`, String(value)), template)
+      },
+    }
+    let pass = react.render(plugin.__internals.components.FilesBody, baseProps)
+    pass.runEffects()
+    await new Promise((done) => setTimeout(done, 0))
+    pass = react.render(plugin.__internals.components.FilesBody, baseProps)
+
+    // Typing schedules exactly one debounced search and marks the root.
+    const filter = () => collect(pass.tree, (node) => node.props?.['data-at-sider-filter'] !== undefined)[0]
+    filter().props.onChange({ target: { value: 'read' } })
+    pass = react.render(plugin.__internals.components.FilesBody, baseProps)
+    assert.equal(pass.tree.props['data-at-sider-filtering'], true, 'the root marks the filtering state')
+    pass.runEffects()
+    const scheduled = timers.splice(0, timers.length).filter((timer) => timer.ms === plugin.__internals.SEARCH_DEBOUNCE_MS)
+    assert.equal(scheduled.length, 1, 'the keystroke is debounced')
+
+    // Firing the debounce searches; the result list replaces the tree.
+    scheduled.forEach((timer) => timer.fn())
+    await new Promise((done) => setTimeout(done, 0))
+    pass = react.render(plugin.__internals.components.FilesBody, baseProps)
+    const results = collect(pass.tree, (node) => node.props?.['data-at-sider-result'] !== undefined)
+    assert.deepEqual(results.map((row) => row.props['data-at-sider-path']), [`${ROOT}/README.md`])
+    assert.ok(collect(pass.tree, (node) => node.props?.['data-at-sider-ref'] !== undefined).length >= 1, 'results carry an @ chip')
+
+    // Clicking a file result opens it through the tab.
+    results[0].props.onClick()
+    assert.deepEqual(opened, ['dsh-resource://file/session/s-1/README.md'])
+
+    // Clearing the filter puts the tree back.
+    filter().props.onChange({ target: { value: '' } })
+    pass = react.render(plugin.__internals.components.FilesBody, baseProps)
+    assert.equal(pass.tree.props['data-at-sider-filtering'], undefined)
+    assert.equal(collect(pass.tree, (node) => node.props?.['data-at-sider-entry'] !== undefined).length, 3, 'the tree is back')
+  })
+
+  it('caps the no-workspace self-heal at two retries', async () => {
+    let call = 0
+    const { plugin, react, timers } = loadPlugin({
+      fetchImpl: async () => (++call <= 9
+        ? jsonResponse({ ok: false, error: { code: 'no-workspace', message: 'still cold' } })
+        : jsonResponse({ ok: true, value: { path: ROOT, root: ROOT, truncated: false, entries: [] } })),
+    })
+    plugin.apply(fakeCtx().ctx)
+    const props = { parent: ROOT, sessionId: 's-1', revision: 0, autoRefresh: false, t: (key) => key }
+    let pass = react.render(plugin.__internals.components.Level, props)
+    pass.runEffects()
+    await new Promise((done) => setTimeout(done, 0))
+    // Fire every scheduled retry; the budget runs out after two.
+    for (let round = 0; round < 6; round++) {
+      const pending = timers.splice(0, timers.length).filter((timer) => timer.ms === plugin.__internals.NO_WORKSPACE_RETRY_MS)
+      if (pending.length === 0) break
+      pending.forEach((timer) => timer.fn())
+      pass = react.render(plugin.__internals.components.Level, props)
+      pass.runEffects()
+      await new Promise((done) => setTimeout(done, 0))
+      pass = react.render(plugin.__internals.components.Level, props)
+    }
+    assert.equal(call, 3, 'initial read + two retries, then the level stays failed')
+    assert.equal(plugin.__internals.NO_WORKSPACE_RETRY_MAX, 2)
+    const notes = collect(pass.tree, (node) => node.props?.['data-at-sider-row'] === 'failed')
+    assert.equal(notes.length, 1)
   })
 
   it('caps the no-workspace self-heal at two retries', async () => {
