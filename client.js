@@ -68,10 +68,10 @@ window.__ModuleLoader__.load({
 .ats-name{white-space:nowrap;text-overflow:ellipsis;min-width:0;overflow:hidden}
 .ats-other{color:var(--dsw-alias-label-tertiary);cursor:default}
 .ats-row.ats-otherRow:hover{background:0 0}
-.ats-ref{flex:none;opacity:0;color:var(--dsw-alias-label-secondary);background:0 0;border:none;border-radius:var(--dsw-radius-sm);cursor:pointer;font:inherit;line-height:1;padding:0 3px}
+.ats-ref{flex:none;opacity:0;white-space:nowrap;color:var(--dsw-alias-label-secondary);background:0 0;border:1px solid transparent;border-radius:var(--dsw-radius-sm);cursor:pointer;font:inherit;line-height:1;padding:0 4px}
 .ats-row:hover .ats-ref,.ats-ref:focus-visible{opacity:1}
-.ats-ref:hover{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}
-.ats-ref.ats-refFlash{opacity:1;color:var(--dsw-alias-label-primary);white-space:nowrap}
+.ats-ref:hover{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover);border-color:var(--dsw-alias-border-l3)}
+.ats-ref.ats-refFlash{opacity:1;color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-border-l3)}
 .ats-mtime{margin-left:auto;flex:none;white-space:nowrap;font-size:11px;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-tertiary)}
 .ats-tool{width:28px;height:28px;color:var(--dsw-alias-label-secondary);border-radius:var(--dsw-radius-sm);cursor:pointer;background:0 0;border:none;flex:none;justify-content:center;align-items:center;padding:6px;line-height:1;display:inline-flex}
 .ats-tool svg{width:15px;height:15px}
@@ -427,7 +427,7 @@ window.__ModuleLoader__.load({
         }
         flash(await copyText(mention) ? 'copied' : 'failed')
       }
-      const label = state === 'idle' ? '@' : t(`ref.${state}`)
+      const label = state === 'idle' ? t(isDir ? 'ref.labelFolder' : 'ref.labelFile') : t(`ref.${state}`)
       return h('button', {
         type: 'button',
         className: state === 'idle' ? css.ref : `${css.ref} ${css.refFlash}`,
@@ -708,6 +708,8 @@ window.__ModuleLoader__.load({
       'autoRefresh.disable': '关闭自动刷新',
       'entry.other': '这不是文件或目录，没法打开。',
       'ref.insert': '引用这个文件',
+      'ref.labelFile': '@文件',
+      'ref.labelFolder': '@文件夹',
       'ref.tip': '插入 @ 引用到输入框；按住 Alt 点击则复制引用文本',
       'ref.inserted': '已引用',
       'ref.copied': '已复制',
@@ -735,6 +737,8 @@ window.__ModuleLoader__.load({
       'autoRefresh.disable': 'Disable auto refresh',
       'entry.other': 'Not a file or a directory, so it cannot be opened.',
       'ref.insert': 'Reference this file',
+      'ref.labelFile': '@file',
+      'ref.labelFolder': '@folder',
       'ref.tip': 'Insert an @ reference into the composer; Alt-click to copy the mention instead',
       'ref.inserted': 'referenced',
       'ref.copied': 'copied',

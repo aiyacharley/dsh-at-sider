@@ -113,7 +113,10 @@ Codes: `bad-request`, `no-workspace`, `outside-workspace`, `not-found`,
 
 ## 5. The `@` button's action
 
-Clicking `@` inserts an atomic file reference into the session's composer — the
+The affordance is a labelled chip, not a bare glyph: the row shows `@文件`
+(`@folder` → `@文件夹` / `@file` / `@folder` through the plugin's own locale
+namespace) right after the file name, so the row says what the click will do.
+Clicking it inserts an atomic file reference into the session's composer — the
 same outcome the built-in `@` completion and the built-in file drop produce:
 
 ```
@@ -136,8 +139,8 @@ Three details matter:
 - **⌥/Alt-click copies on purpose**, so the clipboard path is always reachable
   even when insertion succeeds.
 
-The row's outcome label is transient (1.4 s) and the button keeps its `@` glyph
-afterwards, so the tree does not accumulate state.
+The row's outcome label is transient (1.4 s) and the button returns to its noun
+label afterwards, so the tree does not accumulate state.
 
 ## 6. Deliberate deviations from the native body
 
@@ -146,6 +149,7 @@ afterwards, so the tree does not accumulate state.
 | auto-refresh toggle | rendered but hidden | visible, `aria-pressed` | a control a user cannot see cannot be used; the state is the same |
 | root path label | shared `PathLabel` (left-edge fade) | own span, end ellipsis + full-path tooltip | avoids importing a Harness Client package |
 | file glyphs | `FileTypeIcon` per kind | one document glyph | same reason |
+| row affordance | none | an `@文件`/`@file` chip after the name (visible on hover/focus) | a bare `@` glyph does not say what it does; the label is the plugin's own copy, localized |
 | level caching | cache survives collapse | reread on reopen | component-local state instead of a slot store; the visible result is the same |
 
 ## 7. What a Harness upgrade can break

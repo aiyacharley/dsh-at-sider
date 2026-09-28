@@ -5,15 +5,15 @@
 A [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin that
 adds two things to the **native** right-sidebar file tree:
 
-1. an **`@` reference button** on every row, right after the file name — one click
-   inserts the canonical `@path` mention into the composer (⌥/Alt-click copies the
-   mention instead);
+1. an **`@file` reference button** on every row, right after the file name
+   (`@folder` on directories) — one click inserts the canonical `@path` mention
+   into the composer (⌥/Alt-click copies the mention instead);
 2. the entry's **modification time**, pinned to the row's far right, with the full
    local time as its tooltip.
 
 ```
-📁 src            @   2026-01-02 11:04
-📄 README.md      @   2026-01-01 09:12
+📁 src          @folder   2026-01-02 11:04
+📄 README.md      @file    2026-01-01 09:12
 ```
 
 It is a *files-plus* tree, not a second sidebar: the native `files` tab keeps its
@@ -45,8 +45,8 @@ follows the normal plugin-HMR rules.
 
 | Row element | Behaviour |
 |---|---|
-| `@` button | Inserts `@path` (or `@"path with spaces"`, `@dir/` for directories) into the session's composer as an atomic file reference — the same chip the built-in `@` completion and the built-in file drop produce. Falls back to copying the mention when no composer is reachable. |
-| `@` + ⌥/Alt-click | Always copies the mention to the clipboard. |
+| `@file` button (`@folder` on directories) | Inserts `@path` (or `@"path with spaces"`, `@dir/` for directories) into the session's composer as an atomic file reference — the same chip the built-in `@` completion and the built-in file drop produce. Falls back to copying the mention when no composer is reachable. The button appears while the row is hovered or focused. |
+| `@file` + ⌥/Alt-click | Always copies the mention to the clipboard. |
 | date column | `YYYY-MM-DD HH:mm` in local time; hover shows the full local date and time. Entries whose stat failed show nothing. |
 | header | Workspace root path, an auto-refresh toggle, and a reload button. |
 | rows | Directories first, then natural case-insensitive name order — as the native tree orders them. |

@@ -438,6 +438,8 @@ describe('rendering the tree', () => {
     const refs = collect(tree, (node) => node.props?.['data-at-sider-ref'] !== undefined)
     assert.equal(refs.length, 2, 'the un-openable entry has no @ button')
     assert.deepEqual(refs.map((ref) => ref.props['data-at-sider-ref']), [`${ROOT}/src`, `${ROOT}/README.md`])
+    // The affordance reads as a labelled reference, not a bare glyph.
+    assert.deepEqual(refs.map((ref) => ref.children[0]), ['@文件夹', '@文件'])
   })
 
   it('opens a file through the tab and refuses nothing twice', async () => {
@@ -516,16 +518,33 @@ describe('rendering the tree', () => {
       fetchImpl: ROW_FETCH,
       navigator: { clipboard: { writeText: async (text) => copied.push(text) } },
     })
-    bare.apply(fakeCtx().ctx)
-    const rows = bareReact.render(bare.__internals.components.RefButton, {
+    // A dictionary-bound `t`, so the label the button shows is the shipped copy.
+    const t = (key) => bare.__internals.dictionaries.zh[key] ?? key
+    const refProps = {
       sessionId: 's-1',
       root: ROOT,
       path: `${ROOT}/README.md`,
       entry: { name: 'README.md', type: 'file', mtimeMs: 1 },
-      t: (key) => key,
-    })
+      t,
+    }
+    bare.apply(fakeCtx().ctx)
+    const rows = bareReact.render(bare.__internals.components.RefButton, refProps)
+    assert.equal(rows.tree.children[0], '@文件', 'the idle label reads as a reference')
     await rows.tree.props.onClick({ preventDefault: () => {}, stopPropagation: () => {}, altKey: false })
     await rows.tree.props.onClick({ preventDefault: () => {}, stopPropagation: () => {}, altKey: true })
     assert.deepEqual(copied, ['@README.md', '@README.md'])
+    const after = bareReact.render(bare.__internals.components.RefButton, refProps)
+    assert.equal(after.tree.children[0], '已复制', 'the outcome replaces the label, then reverts')
+
+    // A directory gets its own noun; a fresh instance so the flash state is idle.
+    const fresh = loadPlugin({ fetchImpl: ROW_FETCH })
+    fresh.plugin.apply(fakeCtx().ctx)
+    const folder = fresh.react.render(fresh.plugin.__internals.components.RefButton, {
+      ...refProps,
+      t: (key) => fresh.plugin.__internals.dictionaries.zh[key] ?? key,
+      path: `${ROOT}/src`,
+      entry: { name: 'src', type: 'directory', mtimeMs: 1 },
+    })
+    assert.equal(folder.tree.children[0], '@文件夹')
   })
 })
