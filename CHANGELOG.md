@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- Fix: the modification-time column could be clipped at the row's right edge. The
+  row was `content-box`, so `width:100%` plus its own horizontal padding
+  overflowed the scroll container by 20px and the last digit of the minute was cut
+  off; `.ats-row` is `border-box` again, which keeps the column inside the row's
+  own inset.
+- Fix: file and folder icons are the host's own artwork again. The first release
+  drew one monochrome document glyph for every file; rows now use the primitives
+  package's `FileTypeIcon` + `classifyFileType` (category-coloured and
+  extension-aware, as the native tree draws them), its
+  `IconFolderOpenRegular`/`IconFolderCloseRegular`, and `GuideArtworkFiles` for
+  the guide capsule — each read defensively, with the inline glyphs kept as the
+  fallback when the module table does not seed them.
+
 ## 0.0.1
 
 First release.

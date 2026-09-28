@@ -60,11 +60,12 @@ window.__ModuleLoader__.load({
 .ats-level{margin:0;padding:0;list-style:none}
 .ats-level .ats-level{padding-left:18px}
 .ats-item{margin:0;padding:0}
-.ats-row{width:100%;min-width:0;color:inherit;font:inherit;text-align:left;border-radius:var(--dsw-radius-md);cursor:pointer;align-items:center;gap:6px;padding:5px 10px;display:flex}
+.ats-row{box-sizing:border-box;width:100%;min-width:0;color:inherit;font:inherit;text-align:left;border-radius:var(--dsw-radius-md);cursor:pointer;align-items:center;gap:6px;padding:5px 10px;display:flex}
 .ats-row:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .ats-row:focus-visible{outline:2px solid var(--dsw-alias-label-primary);outline-offset:-2px}
 .ats-main{align-items:center;gap:6px;min-width:0;flex:0 1 auto;display:flex}
 .ats-icon{color:var(--dsw-alias-label-tertiary);flex:none}
+.ats-fileIcon{flex:none}
 .ats-name{white-space:nowrap;text-overflow:ellipsis;min-width:0;overflow:hidden}
 .ats-other{color:var(--dsw-alias-label-tertiary);cursor:default}
 .ats-row.ats-otherRow:hover{background:0 0}
@@ -93,6 +94,7 @@ window.__ModuleLoader__.load({
       row: 'ats-row',
       main: 'ats-main',
       icon: 'ats-icon',
+      fileIcon: 'ats-fileIcon',
       name: 'ats-name',
       other: 'ats-other',
       otherRow: 'ats-otherRow',
@@ -341,6 +343,33 @@ window.__ModuleLoader__.load({
     }
 
     // ───────────────────────────── icons ─────────────────────────────
+    // ───────────────────────────── host artwork ─────────────────────────────
+    /**
+     * The host's own icon vocabulary, when the browser module table exposes it.
+     *
+     * The plugin-authoring guidance tells a third-party plugin not to require a
+     * Harness Client package: such an import changes without notice, a plain-JS
+     * plugin has no type check, and a throwing component blanks the slot entry.
+     * This plugin makes one deliberate, guarded exception for the five exports
+     * the native file tree itself draws with — `FileTypeIcon`,
+     * `classifyFileType`, `IconFolderOpenRegular`, `IconFolderCloseRegular` and
+     * the guide artwork — because hand-copying 28px category-coloured artwork is
+     * exactly the kind of thing a plugin cannot keep faithful, and the tree is
+     * meant to look native. The read is total: a module-table miss, a renamed
+     * export, or a non-function value all leave `host` undefined, and the inline
+     * fallback glyphs below render instead.
+     */
+    const host = (() => {
+      try {
+        const primitives = require('@deepseek-ai/dsh-client-ui-primitives')
+        if (typeof primitives?.FileTypeIcon !== 'function') return undefined
+        if (typeof primitives?.classifyFileType !== 'function') return undefined
+        return primitives
+      } catch {
+        return undefined
+      }
+    })()
+
     const svgProps = (size) => ({
       width: size,
       height: size,
@@ -354,20 +383,70 @@ window.__ModuleLoader__.load({
       strokeLinejoin: 'round',
     })
 
-    /** A folder glyph, open or closed. */
-    function FolderIcon({ open, size = 16, className }) {
-      const props = { ...svgProps(size), className }
+    /** The inline folder sheet, used only when the host artwork is unavailable. */
+    function FallbackFolderIcon({ open, size = 16, className = css.icon }) {
       const path = open
         ? 'M1.5 12.5V4a1 1 0 0 1 1-1h3.2l1.3 1.6h6a1 1 0 0 1 1 1v1H5.4a1 1 0 0 0-.95.68L3 12.5H1.5Z'
         : 'M1.5 12V4a1 1 0 0 1 1-1h3.2l1.3 1.6h6.5a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1Z'
-      return h('svg', props, h('path', { d: path }))
+      return h('svg', { ...svgProps(size), className }, h('path', { d: path }))
     }
 
-    /** A generic document glyph: one shape for every file kind, host-subdued. */
-    function FileIcon({ size = 16, className }) {
-      return h('svg', { ...svgProps(size), className },
+    /** The inline document sheet, used only when the host artwork is unavailable. */
+    function FallbackFileIcon({ size = 16 }) {
+      return h('svg', { ...svgProps(size), className: css.icon },
         h('path', { d: 'M4 1.5h5l3 3v10H4z' }),
         h('path', { d: 'M9 1.5v3h3' }))
+    }
+
+    /**
+     * A folder row's glyph: the host's line-art folder, exactly as the native
+     * tree draws it, with the inline sheet as the fallback.
+     */
+    function FolderIcon({ open, size = 16, className = css.icon }) {
+      const HostIcon = open === true ? host?.IconFolderOpenRegular : host?.IconFolderCloseRegular
+      if (typeof HostIcon === 'function') return h(HostIcon, { size, className })
+      return h(FallbackFolderIcon, { open, size, className })
+    }
+
+    /**
+     * A file row's glyph: the host's category-coloured, extension-aware icon
+     * (`code` blue, `markdown` blue, `image` violet, `pdf` red …) — the same call
+     * the native tree makes — with the inline sheet as the fallback.
+     */
+    function FileIcon({ name, size = 16 }) {
+      if (host !== undefined) {
+        try {
+          return h(host.FileTypeIcon, { kind: host.classifyFileType(name ?? ''), size, className: css.fileIcon })
+        } catch {
+          // A malformed name or a changed classifier: keep the row.
+        }
+      }
+      return h(FallbackFileIcon, { size })
+    }
+
+    /** The tab chip's folder sheet: the host's folder category icon when available. */
+    function TitleIcon() {
+      if (host !== undefined) {
+        try {
+          return h(host.FileTypeIcon, { kind: 'folder', size: 16, className: css.titleIcon })
+        } catch {
+          // fall through
+        }
+      }
+      return h(FallbackFolderIcon, { size: 16, className: css.titleIcon })
+    }
+
+    /** The guide capsule's artwork: the host's Files artwork when available. */
+    function GuideIcon(props) {
+      const Artwork = host?.GuideArtworkFiles
+      if (typeof Artwork === 'function') {
+        try {
+          return h(Artwork, { size: props?.size ?? 16, className: props?.className })
+        } catch {
+          // fall through
+        }
+      }
+      return h(FallbackFolderIcon, { size: props?.size ?? 16, className: props?.className })
     }
 
     /** The refresh control's glyph. */
@@ -454,7 +533,7 @@ window.__ModuleLoader__.load({
         children.push(h('span', { className: css.main, key: 'main' },
           isDir
             ? h(FolderIcon, { open: isOpen, className: css.icon })
-            : h(FileIcon, { className: css.icon }),
+            : h(FileIcon, { name: entry.name }),
           name))
         children.push(h(RefButton, {
           key: 'ref',
@@ -671,7 +750,7 @@ window.__ModuleLoader__.load({
     /** The tab chip: our folder sheet followed by the tab's title. */
     function FilesTitle({ useTabInfo }) {
       const { tab } = useTabInfo()
-      return h(React.Fragment, null, h(FolderIcon, { size: 16, className: css.titleIcon }), tab.title)
+      return h(React.Fragment, null, h(TitleIcon), tab.title)
     }
 
     // ───────────────────────────── registration ─────────────────────────────
@@ -689,7 +768,7 @@ window.__ModuleLoader__.load({
           order: 10,
           title: () => t('guide.title'),
           description: () => t('guide.description'),
-          icon: (props) => h(FolderIcon, { size: props?.size ?? 16, className: props?.className }),
+          icon: (props) => h(GuideIcon, props),
         }],
       }
     }
@@ -795,7 +874,8 @@ window.__ModuleLoader__.load({
         mentionFor,
         orderEntries,
         relativeToRoot,
-        components: { Entry, FilesBody, FilesTitle, Level, RefButton },
+        components: { Entry, FilesBody, FilesTitle, Level, RefButton, FileIcon, FolderIcon, GuideIcon, TitleIcon },
+        hostPrimitives: () => host,
       },
     })
     return plugin

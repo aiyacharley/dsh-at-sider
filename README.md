@@ -48,6 +48,7 @@ follows the normal plugin-HMR rules.
 | `@file` button (`@folder` on directories) | Inserts `@path` (or `@"path with spaces"`, `@dir/` for directories) into the session's composer as an atomic file reference — the same chip the built-in `@` completion and the built-in file drop produce. Falls back to copying the mention when no composer is reachable. The button appears while the row is hovered or focused. |
 | `@file` + ⌥/Alt-click | Always copies the mention to the clipboard. |
 | date column | `YYYY-MM-DD HH:mm` in local time; hover shows the full local date and time. Entries whose stat failed show nothing. |
+| icons | The host's own artwork, unchanged: `FileTypeIcon` + `classifyFileType` per file kind (category-coloured), the line-art folder icons, and `GuideArtworkFiles` for the guide capsule — the same components the native tree draws with. Inline glyphs take over only if those exports are unavailable. |
 | header | Workspace root path, an auto-refresh toggle, and a reload button. |
 | rows | Directories first, then natural case-insensitive name order — as the native tree orders them. |
 

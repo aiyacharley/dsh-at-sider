@@ -84,8 +84,24 @@ function collect(node, predicate, found = []) {
   return found
 }
 
+/** Fake host artwork, shaped like the five exports the plugin reads from primitives. */
+function fakePrimitives() {
+  const kinds = []
+  return {
+    kinds,
+    FileTypeIcon: (props) => {
+      kinds.push(props.kind)
+      return { type: 'host-file-type-icon', props }
+    },
+    classifyFileType: (name) => (name.endsWith('.md') ? 'markdown' : 'other'),
+    IconFolderOpenRegular: (props) => ({ type: 'host-folder-open', props }),
+    IconFolderCloseRegular: (props) => ({ type: 'host-folder-closed', props }),
+    GuideArtworkFiles: (props) => ({ type: 'host-guide-artwork', props }),
+  }
+}
+
 /** Load the browser artifact and materialize its plugin, per test. */
-function loadPlugin({ fetchImpl, navigator: navigatorImpl } = {}) {
+function loadPlugin({ fetchImpl, navigator: navigatorImpl, primitives } = {}) {
   const registrations = []
   const window = {
     __ModuleLoader__: { load: (registration) => registrations.push(registration) },
@@ -106,6 +122,12 @@ function loadPlugin({ fetchImpl, navigator: navigatorImpl } = {}) {
   const react = createReact()
   const plugin = registration.factory((specifier) => {
     if (specifier === 'react') return react.React
+    if (specifier === '@deepseek-ai/dsh-client-ui-primitives') {
+      // Without `primitives` the module table has no such word: the require throws
+      // and the plugin must fall back to its own glyphs.
+      if (primitives === undefined) throw new Error('client-modules: require missed the module table')
+      return primitives
+    }
     throw new Error(`unexpected require(${JSON.stringify(specifier)})`)
   })
   return { registration, plugin, react, calls }
@@ -386,8 +408,8 @@ describe('rendering the tree', () => {
   }
 
   /** Render FilesBody once, run its effects, let the listing land, and render again. */
-  async function renderBody({ services = {} } = {}) {
-    const { plugin, react, calls } = loadPlugin({ fetchImpl: ROW_FETCH })
+  async function renderBody({ services = {}, primitives } = {}) {
+    const { plugin, react, calls } = loadPlugin({ fetchImpl: ROW_FETCH, primitives })
     const { ctx } = fakeCtx(services)
     plugin.apply(ctx)
     const opened = []
@@ -448,6 +470,67 @@ describe('rendering the tree', () => {
     const row = collect(fileRow, (node) => node.props?.role === 'button')[0]
     row.props.onClick()
     assert.deepEqual(opened, ['dsh-resource://file/session/s-1/README.md'])
+  })
+
+  it('draws the host’s own file-type and folder artwork when the module table has it', async () => {
+    const primitives = fakePrimitives()
+    const { tree, plugin } = await renderBody({ primitives })
+    assert.equal(plugin.__internals.hostPrimitives(), primitives)
+
+    // Files go through the host classifier and the host category icon; an
+    // `other` entry draws no glyph, exactly as the native tree draws none.
+    const fileIcons = collect(tree, (node) => node.type === 'host-file-type-icon')
+    assert.deepEqual(fileIcons.map((node) => node.props.kind), ['markdown'])
+    assert.equal(fileIcons[0].props.size, 16)
+    assert.equal(fileIcons[0].props.className, 'ats-fileIcon')
+
+    // Directories use the host's line-art folder, closed at this level.
+    const folders = collect(tree, (node) => node.type === 'host-folder-closed')
+    assert.equal(folders.length, 1)
+    assert.equal(folders[0].props.className, 'ats-icon')
+    assert.equal(collect(tree, (node) => node.type === 'host-folder-open').length, 0)
+  })
+
+  it('uses the host artwork for the chip title and the guide capsule', () => {
+    const primitives = fakePrimitives()
+    const { plugin, react } = loadPlugin({ primitives })
+    plugin.apply(fakeCtx().ctx)
+
+    const title = react.render(plugin.__internals.components.FilesTitle, {
+      useTabInfo: () => ({ tab: { title: 'Files' } }),
+    })
+    const chips = collect(title.tree, (node) => node.type === 'host-file-type-icon')
+    assert.equal(chips.length, 1)
+    assert.equal(chips[0].props.kind, 'folder')
+
+    const guideIcon = plugin.__internals.definition((key) => key).guide[0].icon
+    const artwork = collect(guideIcon({ size: 16 }), (node) => node.type === 'host-guide-artwork')
+    assert.equal(artwork.length, 1)
+  })
+
+  it('falls back to its own glyphs when the host artwork is unavailable', async () => {
+    const { tree, plugin } = await renderBody()
+    assert.equal(plugin.__internals.hostPrimitives(), undefined)
+    // One folder glyph (the level's directory) plus one document glyph.
+    assert.ok(collect(tree, (node) => node.type === 'svg').length >= 2)
+    assert.equal(collect(tree, (node) => String(node.type).startsWith('host-')).length, 0)
+    // The chip title and the guide capsule fall back too, without throwing.
+    const title = plugin.__internals.components.FilesTitle({ useTabInfo: () => ({ tab: { title: 'Files' } }) })
+    assert.ok(collect(title, (node) => node.type === 'svg').length >= 1)
+  })
+
+  it('keeps the row inside its padding so the date column cannot be clipped', () => {
+    const { plugin } = loadPlugin()
+    const { cssText } = plugin.__internals
+    const row = /\.ats-row\{([^}]*)\}/.exec(cssText)
+    assert.ok(row !== null, 'the row rule exists')
+    assert.match(row[1], /box-sizing:border-box/, 'the row must not overflow by its own padding')
+    const mtime = /\.ats-mtime\{([^}]*)\}/.exec(cssText)
+    assert.ok(mtime !== null)
+    assert.match(mtime[1], /margin-left:auto/)
+    assert.match(mtime[1], /flex:none/)
+    assert.match(cssText, /\.ats-fileIcon\{flex:none\}/)
+    assert.equal(plugin.__internals.css.fileIcon, 'ats-fileIcon')
   })
 
   it('routes a failing level to its failure line', async () => {

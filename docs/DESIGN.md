@@ -148,9 +148,37 @@ label afterwards, so the tree does not accumulate state.
 |---|---|---|---|
 | auto-refresh toggle | rendered but hidden | visible, `aria-pressed` | a control a user cannot see cannot be used; the state is the same |
 | root path label | shared `PathLabel` (left-edge fade) | own span, end ellipsis + full-path tooltip | avoids importing a Harness Client package |
-| file glyphs | `FileTypeIcon` per kind | one document glyph | same reason |
 | row affordance | none | an `@文件`/`@file` chip after the name (visible on hover/focus) | a bare `@` glyph does not say what it does; the label is the plugin's own copy, localized |
 | level caching | cache survives collapse | reread on reopen | component-local state instead of a slot store; the visible result is the same |
+
+### The one guarded exception: the host's own artwork
+
+Icons are **not** re-drawn. The rows use `@deepseek-ai/dsh-client-ui-primitives`'
+`FileTypeIcon` + `classifyFileType` (category-coloured, extension-aware: code and
+markdown blue, folders amber, images violet, PDFs red, …) and its
+`IconFolderOpenRegular`/`IconFolderCloseRegular`, and the guide capsule uses
+`GuideArtworkFiles` — the exact calls the native tree makes, so the takeover looks
+native. The first version of this plugin instead drew a single monochrome
+document glyph; that was a visible regression and the reason for this exception.
+
+This deliberately bends one authoring rule ("do not require a Harness Client
+package"), for the reason that rule itself gives: the artwork is 28px
+category-coloured art inside a 523 KB bundle that a plugin cannot keep faithful by
+copying, and icons are the one thing a user compares directly against the native
+tree. The bend is bounded:
+
+- the module is read **once, inside a `try`/`catch`**, and only if
+  `FileTypeIcon` *and* `classifyFileType` are functions — a module-table miss, a
+  renamed export or a non-function value leaves `host` undefined;
+- every icon then falls back to the inline glyphs this plugin ships, so the tree
+  renders on a shell that does not seed that module at all;
+- the classifier call and the element construction are wrapped, so a changed
+  classifier cannot take the tree down with it;
+- `CodeFileIcon`-style context-sensitive icons are *not* used: those would need a
+  project-file snapshot the tree does not have.
+
+The `data-at-sider-*` hooks let a test assert both paths (host artwork present /
+absent), which is what keeps the fallback from rotting.
 
 ## 7. What a Harness upgrade can break
 
@@ -165,21 +193,25 @@ place:
 | `tab.actions.openResource` / `bindCommands` | file opening, refresh shortcut |
 | `conversation.input.for(scope).addFiles` | falls back to copying |
 | `remote.$stream` + `remote.workspaceFiles.changes` | auto-refresh becomes a no-op; the reload button still works |
+| the primitives exports `FileTypeIcon` / `classifyFileType` / `IconFolder*Regular` / `GuideArtworkFiles` | the inline fallback glyphs render instead (icons only) |
 | this plugin's own `/api` route | unaffected |
 
 ## 8. Verification performed
 
-- `node --test test/host.test.mjs test/client.test.mjs` — 37 tests: containment
+- `node --test test/host.test.mjs test/client.test.mjs` — 41 tests: containment
   (including the sibling-prefix and `..` cases), per-entry `mtimeMs`, truncation,
   failure-code mapping, bounded concurrency; the route request/response contract;
   `apply()` registering exactly one authenticated POST route, and staying inert
   without Connection or the session registry; the artifact's loader registration;
   the takeover definition; mention grammar; resource addresses; listing transport
-  failures; composer insertion and the clipboard fallback; and a rendered-tree
+  failures; composer insertion and the clipboard fallback; the button's labels;
+  the host-artwork path and its fallback; the row's box model; and a rendered-tree
   smoke test through a minimal React shim (rows, dates, `@` buttons, a directory
   click, a failure line, the no-workspace state, and both click paths).
 - `dsh --profile web --patch ./cordis.patch.yml --dump-config` — the patch layer
   composes and the `dsh-at-sider` row lands in the composed profile.
+- The published artifact: installed from the npm registry into a scratch prefix,
+  imported by name, and checked for its `dsh.client` / `dsh.bundle` declarations.
 
 Not verified: the rendered GUI itself, and therefore the actual visual result,
 could not be checked in this environment (installing into the profile and
