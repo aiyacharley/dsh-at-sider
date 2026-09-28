@@ -123,6 +123,58 @@ describe('plugin.apply', () => {
   })
 })
 
+describe('cold-session fallback (restored tab right after a restart)', () => {
+  const internals = () => import('../index.js').then((m) => m.__internals)
+
+  it('resolves the root from the live session header first', async () => {
+    const { workspaceRootOf } = await internals()
+    const sessions = { get: (id) => (id === 's1' ? { header: { cwd: 'C:/ws' } } : undefined) }
+    assert.equal(await workspaceRootOf(sessions, 's1', () => { throw new Error('must not touch persistence') }), 'C:/ws')
+  })
+
+  it('falls back to the durable header when the session is not live yet', async () => {
+    const { workspaceRootOf } = await internals()
+    const sessions = { get: () => undefined }
+    const persistence = { stat: async (id) => (id === 'cold' ? { header: { cwd: 'C:/cold-ws' } } : undefined) }
+    assert.equal(await workspaceRootOf(sessions, 'cold', () => persistence), 'C:/cold-ws')
+    assert.equal(await workspaceRootOf(sessions, 'other', () => persistence), undefined)
+  })
+
+  it('keeps working when persistence is missing, broken, or refuses', async () => {
+    const { workspaceRootOf } = await internals()
+    const sessions = { get: () => ({ header: {} }) }
+    assert.equal(await workspaceRootOf(sessions, 's1'), undefined, 'no accessor at all')
+    assert.equal(await workspaceRootOf(sessions, 's1', () => undefined), undefined, 'accessor returns nothing')
+    assert.equal(await workspaceRootOf(sessions, 's1', () => ({})), undefined, 'persistence without stat')
+    assert.equal(await workspaceRootOf(sessions, 's1', () => { throw new Error('service missing') }), undefined, 'accessor throws')
+    const rejecting = { stat: async () => { throw new Error('boom') } }
+    assert.equal(await workspaceRootOf(sessions, 's1', () => rejecting), undefined, 'stat rejects')
+  })
+
+  it('serves the route from the durable header for a cold session', async () => {
+    const routes = []
+    const services = {
+      connection: { fetch: { register: (route) => { routes.push(route); return async () => {} } } },
+      sessions: { get: () => undefined },
+      sessionPersistence: { stat: async () => ({ header: { cwd: root } }) },
+    }
+    apply({
+      inject: (deps, callback) => {
+        callback({ get: (key) => services[key], effect: (fn) => { fn(); return () => {} } })
+      },
+    })
+    assert.equal(routes.length, 1)
+    const response = await routes[0].fetch(new Request(`http://127.0.0.1${ROUTE_PATH}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId: 'restored', path: root }),
+    }))
+    const payload = await response.json()
+    assert.equal(payload.ok, true, 'a cold session still lists')
+    assert.equal(payload.value.entries.length, 4)
+  })
+})
+
 describe('route path', () => {
   it('is an authenticated /api path made of legal segments', () => {
     assert.equal(ROUTE_PATH, '/api/dsh-at-sider/list')

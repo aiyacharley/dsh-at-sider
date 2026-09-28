@@ -46,6 +46,9 @@ window.__ModuleLoader__.load({
     const FEEDBACK_MS = 1400
     /** Coalescing window for watch-driven rereads, so one save cannot thrash a level. */
     const REFRESH_DEBOUNCE_MS = 150
+    /** Self-heal budget for a `no-workspace` answer: the Host may still be resuming the Session. */
+    const NO_WORKSPACE_RETRY_MS = 1200
+    const NO_WORKSPACE_RETRY_MAX = 2
 
     // ───────────────────────────── styles ─────────────────────────────
     // Own prefix, host theme tokens only, copied from the native tree's own
@@ -73,8 +76,9 @@ window.__ModuleLoader__.load({
 .ats-row:hover .ats-ref,.ats-ref:focus-visible{opacity:1}
 .ats-ref:hover{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover);border-color:var(--dsw-alias-border-l3)}
 .ats-ref.ats-refFlash{opacity:1;color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-border-l3)}
-.ats-mtime{margin-left:auto;flex:none;white-space:nowrap;font-size:11px;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-tertiary)}
-.ats-size{flex:none;white-space:nowrap;font-size:11px;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-tertiary)}
+.ats-right{margin-left:auto;flex:none;align-items:baseline;gap:2ch;display:flex}
+.ats-size{min-width:7ch;text-align:right;white-space:nowrap;font-size:11px;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-tertiary)}
+.ats-mtime{white-space:nowrap;font-size:11px;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-tertiary)}
 .ats-mtimeShort{display:none}
 .ats-root[data-at-sider-width="1"] .ats-size,.ats-root[data-at-sider-width="2"] .ats-size{display:none}
 .ats-root[data-at-sider-width="1"] .ats-ref .ats-word{display:none}
@@ -107,6 +111,7 @@ window.__ModuleLoader__.load({
       ref: 'ats-ref',
       refFlash: 'ats-refFlash',
       word: 'ats-word',
+      right: 'ats-right',
       size: 'ats-size',
       mtime: 'ats-mtime',
       mtimeLong: 'ats-mtimeLong',
@@ -689,8 +694,11 @@ window.__ModuleLoader__.load({
           t,
         }))
       }
+      // The right-hand group: size right-aligned in a fixed box, a two-space
+      // gap, then the date — pinned to the row's far edge as one unit.
+      const rightSide = []
       if (entry.size !== undefined) {
-        children.push(h('span', {
+        rightSide.push(h('span', {
           key: 'size',
           className: css.size,
           title: t('size.exact', { n: Math.round(entry.size).toLocaleString() }),
@@ -700,7 +708,7 @@ window.__ModuleLoader__.load({
       if (entry.mtimeMs !== undefined) {
         // Both time shapes are always in the DOM; the width tier decides which
         // one the stylesheet shows.
-        children.push(h('span', {
+        rightSide.push(h('span', {
           key: 'mtime',
           className: css.mtime,
           title: mtimeTitle(entry.mtimeMs, entry.size),
@@ -708,6 +716,9 @@ window.__ModuleLoader__.load({
         },
         h('span', { key: 'long', className: css.mtimeLong }, formatMtime(entry.mtimeMs)),
         h('span', { key: 'short', className: css.mtimeShort }, formatMtimeShort(entry.mtimeMs))))
+      }
+      if (rightSide.length > 0) {
+        children.push(h('span', { key: 'right', className: css.right }, rightSide))
       }
       const rowProps = {
         className: entry.type === 'other' ? `${css.row} ${css.other} ${css.otherRow}` : css.row,
@@ -742,20 +753,35 @@ window.__ModuleLoader__.load({
       const { parent, sessionId, revision, autoRefresh, t } = props
       const [level, setLevel] = React.useState({ phase: 'loading' })
       const [pulse, setPulse] = React.useState(0)
+      const retryTimer = React.useRef(0)
+      const retryCount = React.useRef(0)
       React.useEffect(() => {
         const controller = new AbortController()
         setLevel((previous) => (previous.phase === 'ready' ? previous : { phase: 'loading' }))
         listDirectory(sessionId, parent, controller.signal).then((result) => {
           if (controller.signal.aborted) return
           if (result.ok) {
+            retryCount.current = 0
             setLevel({ phase: 'ready', entries: result.value.entries, truncated: result.value.truncated })
             return
+          }
+          // A freshly restarted Host may not have resumed this Session yet, so
+          // the route answers `no-workspace` for the restored tab. Self-heal
+          // with a couple of spaced retries instead of leaving a dead failure
+          // line that only a manual reload would clear.
+          if (result.error.code === 'no-workspace' && retryCount.current < NO_WORKSPACE_RETRY_MAX) {
+            retryCount.current += 1
+            if (retryTimer.current !== 0) window.clearTimeout(retryTimer.current)
+            retryTimer.current = window.setTimeout(() => setPulse((value) => value + 1), NO_WORKSPACE_RETRY_MS)
           }
           setLevel((previous) => (previous.phase === 'ready'
             ? { ...previous, failure: result.error }
             : { phase: 'failed', failure: result.error }))
         })
-        return () => controller.abort()
+        return () => {
+          controller.abort()
+          if (retryTimer.current !== 0) window.clearTimeout(retryTimer.current)
+        }
       }, [parent, sessionId, revision, pulse])
       React.useEffect(() => {
         if (!autoRefresh) return undefined
@@ -1087,6 +1113,8 @@ window.__ModuleLoader__.load({
         widthTier,
         SORT_KEYS,
         SORT_STORAGE_KEY,
+        NO_WORKSPACE_RETRY_MS,
+        NO_WORKSPACE_RETRY_MAX,
         components: { Entry, FilesBody, FilesTitle, Level, RefButton, FileIcon, FolderIcon, GuideIcon, TitleIcon },
         hostPrimitives: () => host,
       },

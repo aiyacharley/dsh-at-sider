@@ -122,9 +122,13 @@ function textOf(node) {
 /** Load the browser artifact and materialize its plugin, per test. */
 function loadPlugin({ fetchImpl, navigator: navigatorImpl, primitives, storage } = {}) {
   const registrations = []
+  const timers = []
   const window = {
     __ModuleLoader__: { load: (registration) => registrations.push(registration) },
-    setTimeout: () => 1,
+    setTimeout: (fn, ms) => {
+      timers.push({ fn, ms })
+      return timers.length
+    },
     clearTimeout: () => {},
   }
   const calls = []
@@ -149,7 +153,7 @@ function loadPlugin({ fetchImpl, navigator: navigatorImpl, primitives, storage }
     }
     throw new Error(`unexpected require(${JSON.stringify(specifier)})`)
   })
-  return { registration, plugin, react, calls }
+  return { registration, plugin, react, calls, timers }
 }
 
 /** A ctx that records every registration and resolves optional services from `services`. */
@@ -492,6 +496,16 @@ describe('rendering the tree', () => {
     assert.match(dates[1].props.title, /· 12 B$/, 'the file’s time tooltip carries the size')
     assert.doesNotMatch(dates[0].props.title, /·/, 'a directory’s tooltip has no size')
 
+    // R11 layout: size and date live in one right-pinned group — the size is
+    // right-aligned in a fixed box, a two-space gap, then the date.
+    const groups = collect(tree, (node) => node.props?.className === 'ats-right')
+    assert.equal(groups.length, 2, 'one right-hand group per dated row')
+    const fileGroup = groups.find((group) => collect([group], (node) => node.props?.['data-at-sider-size'] !== undefined).length > 0)
+    const groupChildren = fileGroup.children
+    assert.equal(groupChildren.length, 2, 'size first, then the date')
+    assert.equal(groupChildren[0].props['data-at-sider-size'], 12)
+    assert.equal(groupChildren[1].props['data-at-sider-mtime'], 1735700645000)
+
     const refs = collect(tree, (node) => node.props?.['data-at-sider-ref'] !== undefined)
     assert.equal(refs.length, 2, 'the un-openable entry has no @ button')
     assert.deepEqual(refs.map((ref) => ref.props['data-at-sider-ref']), [`${ROOT}/src`, `${ROOT}/README.md`])
@@ -560,16 +574,21 @@ describe('rendering the tree', () => {
     const row = /\.ats-row\{([^}]*)\}/.exec(cssText)
     assert.ok(row !== null, 'the row rule exists')
     assert.match(row[1], /box-sizing:border-box/, 'the row must not overflow by its own padding')
+    // The right pin lives on the size+date group (ats-right); the date itself
+    // only carries typography.
+    const right = /\.ats-right\{([^}]*)\}/.exec(cssText)
+    assert.ok(right !== null, 'the right-hand group rule exists')
+    assert.match(right[1], /margin-left:auto/)
+    assert.match(right[1], /gap:2ch/, 'a two-space gap between size and date')
     const mtime = /\.ats-mtime\{([^}]*)\}/.exec(cssText)
     assert.ok(mtime !== null)
-    assert.match(mtime[1], /margin-left:auto/)
-    assert.match(mtime[1], /flex:none/)
+    assert.doesNotMatch(mtime[1], /margin-left:auto/)
     assert.match(cssText, /\.ats-fileIcon\{flex:none\}/)
     assert.equal(plugin.__internals.css.fileIcon, 'ats-fileIcon')
   })
 
   it('routes a failing level to its failure line', async () => {
-    const { plugin, react } = loadPlugin({
+    const { plugin, react, calls } = loadPlugin({
       fetchImpl: async () => jsonResponse({ ok: false, error: { code: 'not-found', message: 'missing' } }),
     })
     const { ctx } = fakeCtx()
@@ -589,6 +608,68 @@ describe('rendering the tree', () => {
     assert.equal(notes.length, 1)
     assert.equal(notes[0].props['data-at-sider-code'], 'not-found')
     assert.equal(notes[0].children[0], 'error.notFound')
+    assert.equal(calls.length, 1, 'a not-found failure does not schedule a retry')
+  })
+
+  it('self-heals a no-workspace failure from a cold session', async () => {
+    let call = 0
+    const { plugin, react, timers, calls } = loadPlugin({
+      fetchImpl: async () => (++call === 1
+        ? jsonResponse({ ok: false, error: { code: 'no-workspace', message: 'session not resumed yet' } })
+        : jsonResponse({
+          ok: true,
+          value: { path: ROOT, root: ROOT, truncated: false, entries: [{ name: 'a.ts', type: 'file', mtimeMs: 5 }] },
+        })),
+    })
+    plugin.apply(fakeCtx().ctx)
+    const props = { parent: ROOT, sessionId: 's-1', revision: 0, autoRefresh: false, t: (key) => key }
+    let pass = react.render(plugin.__internals.components.Level, props)
+    pass.runEffects()
+    await new Promise((done) => setTimeout(done, 0))
+
+    // The failure schedules exactly one spaced retry…
+    assert.equal(plugin.__internals.NO_WORKSPACE_RETRY_MS, 1200)
+    assert.equal(timers.filter((timer) => timer.ms === plugin.__internals.NO_WORKSPACE_RETRY_MS).length, 1)
+    const failed = react.render(plugin.__internals.components.Level, props)
+    assert.equal(collect(failed.tree, (node) => node.props?.['data-at-sider-row'] === 'failed').length, 1)
+
+    // …firing it re-lists through the pulse, and the level recovers.
+    timers.splice(0, timers.length).forEach((timer) => timer.fn())
+    pass = react.render(plugin.__internals.components.Level, props)
+    pass.runEffects()
+    await new Promise((done) => setTimeout(done, 0))
+    pass = react.render(plugin.__internals.components.Level, props)
+    const rows = collect(pass.tree, (node) => node.props?.['data-at-sider-entry'] !== undefined)
+    assert.deepEqual(rows.map((row) => row.props['data-at-sider-path']), [`${ROOT}/a.ts`])
+    assert.equal(calls.length, 2, 'exactly one retry was made')
+  })
+
+  it('caps the no-workspace self-heal at two retries', async () => {
+    let call = 0
+    const { plugin, react, timers } = loadPlugin({
+      fetchImpl: async () => (++call <= 9
+        ? jsonResponse({ ok: false, error: { code: 'no-workspace', message: 'still cold' } })
+        : jsonResponse({ ok: true, value: { path: ROOT, root: ROOT, truncated: false, entries: [] } })),
+    })
+    plugin.apply(fakeCtx().ctx)
+    const props = { parent: ROOT, sessionId: 's-1', revision: 0, autoRefresh: false, t: (key) => key }
+    let pass = react.render(plugin.__internals.components.Level, props)
+    pass.runEffects()
+    await new Promise((done) => setTimeout(done, 0))
+    // Fire every scheduled retry; the budget runs out after two.
+    for (let round = 0; round < 6; round++) {
+      const pending = timers.splice(0, timers.length).filter((timer) => timer.ms === plugin.__internals.NO_WORKSPACE_RETRY_MS)
+      if (pending.length === 0) break
+      pending.forEach((timer) => timer.fn())
+      pass = react.render(plugin.__internals.components.Level, props)
+      pass.runEffects()
+      await new Promise((done) => setTimeout(done, 0))
+      pass = react.render(plugin.__internals.components.Level, props)
+    }
+    assert.equal(call, 3, 'initial read + two retries, then the level stays failed')
+    assert.equal(plugin.__internals.NO_WORKSPACE_RETRY_MAX, 2)
+    const notes = collect(pass.tree, (node) => node.props?.['data-at-sider-row'] === 'failed')
+    assert.equal(notes.length, 1)
   })
 
   it('renders the no-workspace state without a tree', () => {
@@ -773,6 +854,16 @@ describe('columns, widths, and sorting (R11–R13)', () => {
     assert.match(cssText, /\.ats-mtimeShort\{display:none\}/, 'the short form is hidden at full width')
     assert.equal(css.size, 'ats-size')
     assert.equal(css.word, 'ats-word')
+    assert.equal(css.mtimeLong, 'ats-mtimeLong')
+    assert.equal(css.mtimeShort, 'ats-mtimeShort')
+    // R11 layout: the right-hand group is pinned with margin-left:auto, the size
+    // is right-aligned in a fixed box, and a two-space gap precedes the date.
+    assert.match(cssText, /\.ats-right\{margin-left:auto;flex:none;align-items:baseline;gap:2ch;display:flex\}/)
+    assert.match(cssText, /\.ats-size\{min-width:7ch;text-align:right;/)
+    const mtimeRule = /\.ats-mtime\{([^}]*)\}/.exec(cssText)
+    assert.ok(mtimeRule !== null)
+    assert.doesNotMatch(mtimeRule[1], /margin-left:auto/, 'the pin lives on the group, not the date')
+    assert.equal(css.right, 'ats-right')
     assert.equal(css.mtimeLong, 'ats-mtimeLong')
     assert.equal(css.mtimeShort, 'ats-mtimeShort')
   })

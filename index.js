@@ -190,17 +190,40 @@ function failure(code, message, status = 200) {
   return jsonReply({ ok: false, error: { code, message } }, status)
 }
 
-/** Resolve a Session's workspace root from the live session registry. */
-function workspaceRootOf(sessions, sessionId) {
+/**
+ * Resolve a Session's workspace root: the live session header first, then the
+ * durable header from session persistence.
+ *
+ * The persistence fallback is what keeps a restored sidebar tab working right
+ * after a Host restart: the previously-open Session is not live in the registry
+ * yet at that moment (the native `workspaceFiles` scope resolves through the
+ * same `sessionPersistence.stat` fallback), so without it the route would answer
+ * `no-workspace` and the tree would refuse to draw until a manual reload.
+ * @param {object | undefined} sessions - the live session registry.
+ * @param {string} sessionId - the authorizing session.
+ * @param {() => unknown} [getPersistence] - lazy accessor for the persistence service.
+ * @returns {Promise<string | undefined>} the absolute workspace root, or undefined.
+ */
+async function workspaceRootOf(sessions, sessionId, getPersistence) {
   const session = typeof sessions?.get === 'function' ? sessions.get(sessionId) : undefined
-  const cwd = session?.header?.cwd
+  const live = session?.header?.cwd
+  if (typeof live === 'string' && live !== '') return live
+  let persistence
+  try {
+    persistence = typeof getPersistence === 'function' ? getPersistence() : undefined
+  } catch {
+    persistence = undefined
+  }
+  if (typeof persistence?.stat !== 'function') return undefined
+  const stored = await persistence.stat(sessionId).catch(() => undefined)
+  const cwd = stored?.header?.cwd
   return typeof cwd === 'string' && cwd !== '' ? cwd : undefined
 }
 
 /**
  * Handle one listing request. Exported for tests; the route below is its only caller.
  * @param {Request} request - the buffered Fetch request.
- * @param {{ getSessionRoot?: (sessionId: string) => string | undefined }} deps - session lookup seam.
+ * @param {{ getSessionRoot?: (sessionId: string) => Promise<string | undefined> | string | undefined }} deps - session lookup seam.
  * @returns {Promise<Response>} the JSON reply.
  */
 export async function handleListRequest(request, deps) {
@@ -215,7 +238,12 @@ export async function handleListRequest(request, deps) {
   const path = typeof record.path === 'string' ? record.path : ''
   if (sessionId === '') return failure('bad-request', 'missing sessionId', 400)
   if (path === '') return failure('bad-request', 'missing path', 400)
-  const root = deps.getSessionRoot(sessionId)
+  let root
+  try {
+    root = await deps.getSessionRoot(sessionId)
+  } catch {
+    root = undefined
+  }
   if (root === undefined) return failure('no-workspace', 'The session has no workspace directory')
   try {
     const value = await listDirectory(root, path)
@@ -239,7 +267,17 @@ export function apply(ctx) {
       ? connection.fetch.register.bind(connection.fetch)
       : undefined
     if (register === undefined) return
-    const deps = { getSessionRoot: (sessionId) => workspaceRootOf(sessions, sessionId) }
+    const deps = {
+      getSessionRoot: (sessionId) => workspaceRootOf(sessions, sessionId, () => {
+        // sessionPersistence is read lazily and tolerantly: a composition
+        // without it simply has no cold-session fallback.
+        try {
+          return scope.get('sessionPersistence')
+        } catch {
+          return undefined
+        }
+      }),
+    }
     scope.effect(() => register({
       path: ROUTE_PATH,
       methods: ['POST'],

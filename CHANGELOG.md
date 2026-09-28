@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.0.4
+
+- Fix: a Files tab restored right after a restart showed
+  “这个会话没有工作区目录。” until a manual reload. Two parts:
+  - **Host**: the route resolves the session's workspace root through session
+    persistence when the session is not live yet — the same cold-session
+    fallback the native `workspaceFiles` scope uses, so a previously-open tab
+    lists even before its session resumes.
+  - **Client**: a level that still fails with `no-workspace` self-heals with up
+    to two spaced retries (1.2 s apart) instead of sitting dead on a failure
+    line that only a manual reload would clear.
+- Polish: the size and the date form **one right-pinned group** — the size is
+  right-aligned inside a fixed box (`min-width: 7ch`, so values line up), a
+  two-space gap (`2ch`) separates it from the date, and the group (not the date
+  alone) carries the row's `margin-left: auto`. Previously the size floated next
+  to the `@` chip while the date sat alone at the edge.
+
 ## 0.0.3
 
 - Feature: **size column** — regular files show a humanized size (`870 B`,
