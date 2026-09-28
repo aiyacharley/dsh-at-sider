@@ -177,7 +177,7 @@ npm test          # node --test，41 个用例，全离线（无网络、无浏�
 
 ## 版本历史
 
-- **Unreleased** — 修复修改时间列被裁切（行改回 `border-box`）；文件/目录图标恢复为宿主原生图标（`FileTypeIcon` + `classifyFileType`、`IconFolder*Regular`、`GuideArtworkFiles`），自带字形仅作兜底；README 结构对齐 dsh-pubmed（中文主文档 + `README_EN.md` + npm/listing badge）。
+- **v0.0.2** — 修复修改时间列被裁切（行改回 `border-box`）；文件/目录图标恢复为宿主原生图标（`FileTypeIcon` + `classifyFileType`、`IconFolder*Regular`、`GuideArtworkFiles`），自带字形仅作兜底；README 结构对齐 dsh-pubmed（中文主文档 + `README_EN.md` + npm/listing badge）。
 - **v0.0.1** — 首个版本：以 `extension` 接管 `files` tab，行内 `@文件`/`@文件夹` 引用按钮 + 行尾修改时间列；Host 半 `/api/dsh-at-sider/list` 列表路由（工作区受限、2000 条上限、32 并发）；41 个离线测试。
 
 > 逐版提交细节见 [git tags](https://github.com/aiyacharley/dsh-at-sider/tags)；设计文档见 [docs/DESIGN.md](docs/DESIGN.md)。

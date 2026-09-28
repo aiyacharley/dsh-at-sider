@@ -223,7 +223,7 @@ npm test          # node --test, 41 cases, fully offline (no network, no browser
 
 ## Version history
 
-- **Unreleased** — fixed the clipped modification-time column (the row is
+- **v0.0.2** — fixed the clipped modification-time column (the row is
   `border-box` again); file/folder icons are the host's own artwork again
   (`FileTypeIcon` + `classifyFileType`, `IconFolder*Regular`,
   `GuideArtworkFiles`), with the inline glyphs kept as a fallback; the README now

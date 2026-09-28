@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.0.2
 
 - Fix: the modification-time column could be clipped at the row's right edge. The
   row was `content-box`, so `width:100%` plus its own horizontal padding
