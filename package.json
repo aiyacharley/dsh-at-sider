@@ -1,6 +1,6 @@
 {
   "name": "dsh-at-sider",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "DeepSeek Harness plugin: adds an @ file reference button (@文件 / @file, @文件夹 / @folder), a modification-time column and a size column, plus sortable rows and width-adaptive columns, to the native right-sidebar file tree, by taking over the builtin `files` tab kind as an extension. The Host half serves each directory's entries with mtimeMs over its own authenticated /api route (the Harness's workspaceFiles listing carries no time); the Client half renders the tree with labelled @ chips that insert a reference into the composer (Alt-click copies the mention) and a pinned date column with a full local-time tooltip.",
   "keywords": [
     "dsh",

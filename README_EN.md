@@ -226,6 +226,11 @@ npm test          # node --test, 41 cases, fully offline (no network, no browser
 
 ## Version history
 
+- **v0.0.4** — fixed a Files tab restored after a restart showing "no workspace
+  directory" until a manual reload (the Host route now resolves the root through
+  session persistence for cold sessions; a failed level self-heals with up to two
+  spaced retries); size-column layout polish (right-aligned fixed box, two-space
+  gap before the date, one right-pinned group); 52 offline tests.
 - **v0.0.3** — new size column (humanized bytes + exact tooltip), sortable rows
   (name/modified time/size/type cycle, directories first, remembered preference),
   and width-adaptive columns (≥380px full / 300–379px no size / <300px bare `@` +

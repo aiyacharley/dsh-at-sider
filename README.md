@@ -180,6 +180,7 @@ npm test          # node --test，41 个用例，全离线（无网络、无浏�
 
 ## 版本历史
 
+- **v0.0.4** — 修复重启后恢复的文件 tab 显示"没有工作区目录"需手动重读（Host 冷会话经 sessionPersistence 兜底解析根目录；失败层级自动重试自愈，最多 2 次）；大小列布局细化（右对齐定宽 + 与日期两格间距，整组右钉）；52 个离线测试。
 - **v0.0.3** — 新增大小列（人性化字节 + 精确 tooltip）、排序（名称/修改时间/大小/类型循环，目录恒在前，偏好记忆）、宽度自适应列（≥380px 全列 / 300–379px 隐大小 / <300px 收起为 `@` + 短时间）；46 个离线测试。
 - **v0.0.2** — 修复修改时间列被裁切（行改回 `border-box`）；文件/目录图标恢复为宿主原生图标（`FileTypeIcon` + `classifyFileType`、`IconFolder*Regular`、`GuideArtworkFiles`），自带字形仅作兜底；README 结构对齐 dsh-pubmed（中文主文档 + `README_EN.md` + npm/listing badge）。
 - **v0.0.1** — 首个版本：以 `extension` 接管 `files` tab，行内 `@文件`/`@文件夹` 引用按钮 + 行尾修改时间列；Host 半 `/api/dsh-at-sider/list` 列表路由（工作区受限、2000 条上限、32 并发）；41 个离线测试。
