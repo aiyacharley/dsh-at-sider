@@ -590,6 +590,32 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * The session id and workspace path of a
+     * `dsh-resource://file/session/<id>/<path>` address, or undefined for
+     * anything else (non-file resources, absolute addresses without a session,
+     * malformed ids).
+     * @param {unknown} address - the tab's content address.
+     * @returns {{ sessionId: string, path: string } | undefined} the decoded parts.
+     */
+    function fileAddressParts(address) {
+      if (typeof address !== 'string') return undefined
+      const prefix = 'dsh-resource://file/session/'
+      if (!address.startsWith(prefix)) return undefined
+      const rest = address.slice(prefix.length)
+      const slash = rest.indexOf('/')
+      if (slash <= 0) return undefined
+      const sessionId = rest.slice(0, slash)
+      const encoded = rest.slice(slash + 1)
+      if (encoded === '') return undefined
+      try {
+        const path = encoded.split('/').map((segment) => decodeURIComponent(segment)).join('/')
+        return path === '' ? undefined : { sessionId, path }
+      } catch {
+        return undefined
+      }
+    }
+
+    /**
      * The workspace path of a `dsh-resource://file/session/<id>/<path>` address,
      * or undefined for anything else (non-file resources, absolute addresses
      * without a session, malformed ids).
@@ -597,20 +623,7 @@ window.__ModuleLoader__.load({
      * @returns {string | undefined} the decoded path.
      */
     function revealPathFromAddress(address) {
-      if (typeof address !== 'string') return undefined
-      const prefix = 'dsh-resource://file/session/'
-      if (!address.startsWith(prefix)) return undefined
-      const rest = address.slice(prefix.length)
-      const slash = rest.indexOf('/')
-      if (slash <= 0) return undefined
-      const encoded = rest.slice(slash + 1)
-      if (encoded === '') return undefined
-      try {
-        const path = encoded.split('/').map((segment) => decodeURIComponent(segment)).join('/')
-        return path === '' ? undefined : path
-      } catch {
-        return undefined
-      }
+      return fileAddressParts(address)?.path
     }
 
     /**
@@ -665,6 +678,30 @@ window.__ModuleLoader__.load({
           requestReveal(path)
         },
       }, t('menu.reveal'))
+    }
+
+    /**
+     * R16: the file-preview tab's one-click "@文件" menu entry — the same
+     * reference chip the tree's `@` button produces, without visiting the tree.
+     * The previewed address carries both the session and the path, so the
+     * mention works even though a menu item has no tree context.
+     */
+    function ReferenceMenuItem({ tab, dismiss, useSessions, t }) {
+      const parts = fileAddressParts(tab?.contentId)
+      if (tab?.kind === KIND || parts === undefined) return null
+      const cwd = typeof useSessions === 'function'
+        ? useSessions((sessions) => sessions.byId?.[parts.sessionId]?.cwd)
+        : undefined
+      const name = parts.path.slice(parts.path.lastIndexOf('/') + 1) || parts.path
+      const onPick = () => {
+        dismiss()
+        performReference(parts.sessionId, cwd, parts.path, { name, type: 'file' }, false).catch(() => {})
+      }
+      return h('button', {
+        type: 'button',
+        className: css.menuItem,
+        onClick: onPick,
+      }, t('menu.reference'))
     }
 
     /**
@@ -1394,6 +1431,7 @@ window.__ModuleLoader__.load({
       'menu.fallback': '回退原生文件树',
       'menu.enhance': '启用增强版文件树',
       'menu.reveal': '在文件树中定位',
+      'menu.reference': '@文件',
       'search.placeholder': '搜索文件…',
       'search.aria': '搜索工作区文件',
       'search.searching': '正在搜索…',
@@ -1439,6 +1477,7 @@ window.__ModuleLoader__.load({
       'menu.fallback': 'Use the native file tree',
       'menu.enhance': 'Use the enhanced file tree',
       'menu.reveal': 'Reveal in file tree',
+      'menu.reference': '@file',
       'search.placeholder': 'Search files…',
       'search.aria': 'Search workspace files',
       'search.searching': 'Searching…',
@@ -1529,6 +1568,12 @@ window.__ModuleLoader__.load({
             order: 901,
             locale: NS,
           }, RevealMenuItem)
+          ctx.slots.register({
+            name: 'sidebar.right.tab.menu.item',
+            id: `${ID}#reference`,
+            order: 902,
+            locale: NS,
+          }, ReferenceMenuItem)
         }), 'dsh-at-sider: tab menu items')
         ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-at-sider: dictionaries')
         ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({
@@ -1558,6 +1603,7 @@ window.__ModuleLoader__.load({
         dictionaries: { zh, en },
         entryOf,
         fileAddressFor,
+        fileAddressParts,
         formatFullMtime,
         formatMtime,
         formatMtimeShort,
@@ -1586,7 +1632,7 @@ window.__ModuleLoader__.load({
         treeKeyDown,
         SEARCH_ROUTE_PATH,
         SEARCH_DEBOUNCE_MS,
-        components: { Entry, FilesBody, FilesTitle, Level, RefButton, FileIcon, FolderIcon, GuideIcon, TitleIcon, RevealMenuItem },
+        components: { Entry, FilesBody, FilesTitle, Level, RefButton, FileIcon, FolderIcon, GuideIcon, TitleIcon, ReferenceMenuItem, RevealMenuItem },
         hostPrimitives: () => host,
       },
     })

@@ -245,6 +245,7 @@ describe('plugin.apply', () => {
     assert.deepEqual(record.slots, [
       'sidebar.right.tab.menu.item',
       'sidebar.right.tab.menu.item',
+      'sidebar.right.tab.menu.item',
       'sidebar.right.pane.tab',
       'sidebar.right.pane.tab.title',
     ])
@@ -253,11 +254,13 @@ describe('plugin.apply', () => {
     assert.equal(toggleMenu.options.locale, 'atSider')
     const revealMenu = record.registrations[1]
     assert.equal(revealMenu.options.id, 'dsh-at-sider#reveal')
-    const body = record.registrations[2]
+    const referenceMenu = record.registrations[2]
+    assert.equal(referenceMenu.options.id, 'dsh-at-sider#reference')
+    const body = record.registrations[3]
     assert.equal(body.options.key, 'dsh-at-sider')
     assert.equal(body.options.locale, 'atSider')
     assert.equal(typeof body.component, 'function')
-    const title = record.registrations[3]
+    const title = record.registrations[4]
     assert.equal(title.options.key, 'dsh-at-sider')
   })
 
@@ -309,6 +312,54 @@ describe('plugin.apply', () => {
     onFile.tree.props.onClick()
     assert.equal(dismissedCount, 1)
     assert.deepEqual(opened, [{ kind: 'files', options: { params: { reveal: 'docs/a.md' } } }])
+  })
+
+  it('offers @文件 on file-preview tabs and inserts the reference (R16)', async () => {
+    const inserted = []
+    let dismissedCount = 0
+    const { plugin, react } = loadPlugin()
+    const { ctx } = fakeCtx({
+      sessions: { scope: (id) => ({ sessionId: id }) },
+      conversation: { input: { for: () => ({ addFiles: (references) => { inserted.push(...references); return true } }) } },
+      sidebarRight: { openTab: () => {} },
+    })
+    plugin.apply(ctx)
+    const t = (key) => plugin.__internals.dictionaries.zh[key] ?? key
+    const useSessions = (selector) => selector({ byId: { 's-1': { cwd: ROOT } } })
+    const reference = plugin.__internals.components.ReferenceMenuItem
+
+    const onFile = react.render(reference, {
+      tab: { kind: 'document-preview', contentId: `dsh-resource://file/session/s-1/${'docs/a.md'}` },
+      dismiss: () => { dismissedCount += 1 },
+      useSessions,
+      t,
+    })
+    assert.equal(textOf(onFile.tree.children), '@文件')
+    await onFile.tree.props.onClick()
+    assert.equal(dismissedCount, 1)
+    assert.deepEqual(inserted, [{
+      source: 'reference',
+      ref: '@docs/a.md',
+      label: 'a.md',
+      appearance: 'file',
+      clipboardText: '@docs/a.md',
+    }])
+
+    // The Files tab and non-file addresses get no entry.
+    const onFilesTab = react.render(reference, {
+      tab: { kind: 'files', contentId: 'sidebar://guide' },
+      dismiss: () => {},
+      useSessions,
+      t,
+    })
+    assert.equal(onFilesTab.tree, null)
+    const onGuide = react.render(reference, {
+      tab: { kind: 'guide', contentId: 'sidebar://guide' },
+      dismiss: () => {},
+      useSessions,
+      t,
+    })
+    assert.equal(onGuide.tree, null)
   })
 })
 
@@ -997,6 +1048,22 @@ describe('rendering the tree', () => {
 
 describe('columns, widths, and sorting (R11–R13)', () => {
   const internals = () => loadPlugin().plugin.__internals
+
+  it('parses file addresses into session + path (R16)', () => {
+    const api = internals()
+    assert.deepEqual(
+      api.fileAddressParts('dsh-resource://file/session/s-1/docs/a.md'),
+      { sessionId: 's-1', path: 'docs/a.md' },
+    )
+    assert.deepEqual(
+      api.fileAddressParts('dsh-resource://file/session/s-1/a%20b/c.md'),
+      { sessionId: 's-1', path: 'a b/c.md' },
+    )
+    assert.equal(api.fileAddressParts('dsh-resource://file/absolute/x'), undefined)
+    assert.equal(api.fileAddressParts('sidebar://guide'), undefined)
+    assert.equal(api.fileAddressParts(undefined), undefined)
+    assert.equal(api.revealPathFromAddress('dsh-resource://file/session/s-1/docs/a.md'), 'docs/a.md')
+  })
 
   it('humanizes byte counts', () => {
     const api = internals()
