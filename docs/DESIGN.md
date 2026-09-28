@@ -17,6 +17,13 @@ The reference implementation for this idea (the third-party
 `dsh-better-sidebar`) solves a related problem by shipping its own explorer. Here
 the goal is the *native* Files tab, which changes the shape of the solution.
 
+Later releases grew the same takeover into a fuller tree — a size column,
+sorting, width-adaptive columns (v0.0.3), a quick filter and locate (v0.1.0),
+keyboard navigation with tree semantics (v0.1.0), and a runtime switch back to
+the builtin body (v0.1.0, §6) — but the constraint that shaped it has not
+changed: everything is built on the native tab kind and the seats the sidebar
+shell actually exposes.
+
 ## 2. Why the whole body is taken over
 
 The native tree is not extensible per row:
@@ -38,6 +45,11 @@ dispatched by the `id` of the definition in force. So this plugin registers
 `id: 'dsh-at-sider'`, `kind: 'files'`, `priority: 'extension'` and its own body
 under its own key — no collision, and the native body resumes the moment the
 plugin unloads.
+
+The native *package* declares no slots, but the sidebar **shell** does expose
+action seats, and those are what the plugin uses for actions that do not belong
+on a row (§6). A seat's absence is a graceful degradation, not a failure: no
+menu seat simply means no menu entries.
 
 Consequences accepted deliberately:
 
@@ -75,7 +87,7 @@ Bounded `stat` concurrency (32) keeps a symlink-heavy or huge directory from
 serializing, and the entry cap (2000) matches the native listing cap so the two
 trees truncate at the same place.
 
-## 4. Why an HTTP route and not a Remote namespace
+## 4. Why HTTP routes and not a Remote namespace
 
 The alternative was a Typert Remote namespace (`ctx.remote.$mount` + a Host
 service). It is feasible — the Host gateway falls back to "SRC mode" without a
@@ -98,7 +110,7 @@ auth fence, and it is the pattern the ecosystem already uses (the installed
 `dsh-context` serves three such routes, and in-box features such as deliverables,
 file upload and session-log export do the same). A bug here costs one 404/500.
 
-Route shape:
+Route shapes:
 
 ```
 POST /api/dsh-at-sider/list
@@ -106,10 +118,16 @@ POST /api/dsh-at-sider/list
   -> 200 { ok: true,  value: { path, root, entries: [{ name, type, mtimeMs, size? }], truncated } }
   -> 200 { ok: false, error: { code, message } }      # domain failures
   -> 400 { ok: false, error: { code: 'bad-request' } } # malformed request
+
+POST /api/dsh-at-sider/search
+  { sessionId, query }
+  -> 200 { ok: true,  value: { query, matches: [{ name, path, dir, type, mtimeMs, size? }], truncated } }
+  -> 200 { ok: false, error: { code, message } }       # domain failures
 ```
 
 Codes: `bad-request`, `no-workspace`, `outside-workspace`, `not-found`,
 `not-directory`, `permission-denied`, `unavailable`. Replies are `no-store`.
+The first route is the listing (§3); the second is the quick filter's walk (§7).
 
 ## 5. The `@` button's action
 
@@ -142,7 +160,103 @@ Three details matter:
 The row's outcome label is transient (1.4 s) and the button returns to its noun
 label afterwards, so the tree does not accumulate state.
 
-## 6. Deliberate deviations from the native body
+The **same call** backs the preview tab's 「@文件」 menu entry (§6): a previewed
+file's address carries its session and path, so the entry can build the identical
+reference without any tree context. It has no surface to show the transient
+label on, so a clipboard fallback there is silent — the same degradation, one
+step quieter.
+
+## 6. The action-menu seam: runtime fallback, reveal, one-click `@`
+
+Actions that do not belong on a row live in the tab's action menu. The seat is:
+
+- `sidebar.right.tab.menu.item` — a **list** seat (session scope). Each entry
+  registers `{ name, id, order?, locale? }` under its **own** `id`, and its
+  component receives the tab it belongs to (`tab`) plus `dismiss()`, alongside
+  the seat's standard props (`sessionId`, `useSessions`, `t`). With no
+  registrant the menu shows only the kit's own layout actions.
+- the entry is handed **its own tab**, so one registration can scope itself by
+  tab type: the toggle renders only for `tab.kind === 'files'`, the reveal and
+  `@` entries only for a file preview (a `dsh-resource://file/session/<id>/<path>`
+  address, read from `TabRecord.contentId`).
+
+**Runtime fallback (R10).** `sidebarRightTabs.register(definition)` returns a
+disposer. Dropping the enhanced definition's registration lets the `files` kind
+fall back to its builtin registration, so the native body renders again;
+re-registering brings the enhancement back. This is exactly what unloading the
+plugin does, which is why the toggle needs no cooperation from the native half
+and no uninstall. The trade-off is stated plainly rather than hidden: the
+enhanced tree's component state (expansion, scroll offset) is discarded on the
+way out — it lives in component state, not a slot store (ROADMAP R30) — and the
+switch is runtime-only, so a restart starts enhanced.
+
+**Reveal in tree (R16).** Client-side navigation carries a parameter bundle:
+`ctx.sidebarRight.openTab(kind, { params })` records `params` on the tab as
+`tab.navigation.params` and bumps `tab.navigation.revision` on every navigation.
+The entry takes the previewed path out of the tab's address and opens the tree
+with `{ params: { reveal: path } }`; the body's effect keys on
+`[reveal, revision, cwd]`, so revealing the same path twice still re-runs.
+
+Turning "reveal this file" into "which directories must be open" uses the same
+`childPath` keys the rows are built from, so the expansion set matches the
+rendered rows exactly (`chainOf` normalizes for comparison but constructs keys in
+the tree's own form, which matters on Windows where the session's `cwd` spelling
+is what every key starts with). The row is then scrolled into view and flashed
+through a `data-at-sider-treeitem` hook on the **row** — not its `li` — using the
+same outline as the keyboard focus ring (§8); the class is re-asserted during the
+flash window because a React re-render of that row would otherwise drop the
+manually added class. The seek retries for a few seconds, because the target row
+does not exist until the levels above it have been read.
+
+## 7. The quick filter and its search route
+
+The filter searches the whole workspace, not the loaded levels, so it needs its
+own route (shape in §4). The Host walk is bounded on purpose:
+
+- `node_modules` and `.git` are skipped — the two directories that would
+  otherwise dominate any walk in a real project;
+- symlinked directories are listed but never descended, so a symlink loop cannot
+  hang the request;
+- depth stops at 12 and results stop at 200 (`truncated` says so);
+- `stat` — the only call that yields `mtimeMs` — runs **only for the matches**,
+  so a wide workspace does not pay a per-entry stat cost;
+- containment is the listing route's rule: the walk starts at the Session's
+  resolved root and can never leave it.
+
+On the Client side the box is debounced (200 ms) and each query carries a
+sequence number, so a slow earlier response can never overwrite a newer one.
+While the query is non-empty the result list replaces the tree, whose levels are
+left untouched underneath; clearing the query restores it. Results keep the
+tree's affordances: the `@` chip inserts a reference, clicking a file opens it,
+and clicking a directory clears the filter *and* expands the tree down to that
+directory.
+
+## 8. Keyboard navigation and accessibility
+
+The rows are a real ARIA tree rather than a list with key handlers added: the
+root is `role="tree"`, rows are `role="treeitem"` with `aria-level` and
+`aria-expanded`, nested levels are `role="group"`, and the intermediate `li`
+elements are `role="none"` so tree items appear as direct children of their group
+in the accessibility tree. Focus is roving — rows are `tabIndex=0` only for the
+focused path, and before any focus has landed every row is a tab stop so the tree
+is still reachable — which is what makes a single Tab leave the tree instead of
+walking every row.
+
+| Key | Behaviour |
+|---|---|
+| ↑ / ↓ | previous / next visible row (across levels) |
+| → | collapsed directory expands; expanded directory focuses its first child |
+| ← | expanded directory collapses; otherwise focus returns to the parent row |
+| Home / End | first / last visible row |
+| Enter / Space | open a file, or toggle a directory |
+| `@` | insert the focused row's reference (the same call the chip makes) |
+
+The focus ring is an `outline` in the label colour, and the reveal flash (§6)
+reuses it deliberately: one visual language for "this row is active". The search
+result count is announced through a polite live region, and the result list is a
+`listbox` whose rows are `option`s.
+
+## 9. Deliberate deviations from the native body
 
 | Aspect | Native | Here | Why |
 |---|---|---|---|
@@ -150,6 +264,9 @@ label afterwards, so the tree does not accumulate state.
 | root path label | shared `PathLabel` (left-edge fade) | own span, end ellipsis + full-path tooltip | avoids importing a Harness Client package |
 | row affordance | none | an `@文件`/`@file` chip after the name (visible on hover/focus) | a bare `@` glyph does not say what it does; the label is the plugin's own copy, localized |
 | level caching | cache survives collapse | reread on reopen | component-local state instead of a slot store; the visible result is the same |
+| accessibility | plain rows in a list | `role="tree"` / `treeitem` / `group` with `aria-level`, roving tabindex | a tree that only responds to the mouse is not reachable by keyboard or screen reader |
+| whole-workspace search | none | header filter + its own Host route | finding a file should not require expanding the right levels by hand |
+| returning to the native tree | uninstall the plugin | right-click the Files tab (runtime toggle, §6) | comparing against the native tree should not cost an uninstall |
 
 ### The one guarded exception: the host's own artwork
 
@@ -180,7 +297,7 @@ tree. The bend is bounded:
 The `data-at-sider-*` hooks let a test assert both paths (host artwork present /
 absent), which is what keeps the fallback from rotting.
 
-## 7. What a Harness upgrade can break
+## 10. What a Harness upgrade can break
 
 Everything the Client half mirrors is listed here so a future failure is easy to
 place:
@@ -189,32 +306,44 @@ place:
 |---|---|
 | `kind: 'files'` + `extension` takeover | the takeover stops applying; the native tree renders unchanged |
 | `sidebar.right.pane.tab` / `.title` seat keys and props (`useTabInfo`, `sessionId`, `useSessions`, `t`) | the body would not mount, or would mount without its provider props |
-| `dsh-resource://file/session/<id>/<path>` grammar | the address builder is local and would need the new grammar |
+| `sidebar.right.tab.menu.item` seat and its owner props (`tab`, `dismiss`) | the menu entries disappear (no toggle, no reveal, no `@`); the tree itself is unaffected |
+| `ctx.sidebarRight.openTab(kind, options)` and `tab.navigation.params` / `.revision` | reveal opens the tree but does not expand or flash anything |
+| `TabRecord.contentId` / `.kind` | the entries can no longer tell which tab they are on, so they hide |
+| `dsh-resource://file/session/<id>/<path>` grammar | the address builder and the address parser in the menu entries would need the new grammar |
 | `tab.actions.openResource` / `bindCommands` | file opening, refresh shortcut |
 | `conversation.input.for(scope).addFiles` | falls back to copying |
 | `remote.$stream` + `remote.workspaceFiles.changes` | auto-refresh becomes a no-op; the reload button still works |
 | the primitives exports `FileTypeIcon` / `classifyFileType` / `IconFolder*Regular` / `GuideArtworkFiles` | the inline fallback glyphs render instead (icons only) |
-| this plugin's own `/api` route | unaffected |
+| this plugin's own `/api` routes | unaffected |
 
-## 8. Verification performed
+## 11. Verification performed
 
-- `node --test test/host.test.mjs test/client.test.mjs` — 46 tests: containment
+- `node --test test/host.test.mjs test/client.test.mjs` — **65 tests**: containment
   (including the sibling-prefix and `..` cases), per-entry `mtimeMs`, truncation,
-  failure-code mapping, bounded concurrency; the route request/response contract;
-  `apply()` registering exactly one authenticated POST route, and staying inert
-  without Connection or the session registry; the artifact's loader registration;
-  the takeover definition; mention grammar; resource addresses; listing transport
-  failures; composer insertion and the clipboard fallback; the button's labels;
-  the host-artwork path and its fallback; the row's box model; size formatting,
-  width tiers, sort comparators, the header sort cycle with its persistence, and
-  the tier CSS; and a rendered-tree
+  failure-code mapping, bounded concurrency; the listing route's request/response
+  contract; `apply()` registering **two** authenticated POST routes and staying
+  inert without Connection or the session registry; the cold-session fallback;
+  the search walk (skip list, result cap, depth cap, blank query, route end to
+  end, `no-workspace`); the artifact's loader registration; the takeover
+  definition and its runtime toggle; menu-entry visibility and the reference the
+  `@` entry inserts; mention grammar; resource addresses and their parser;
+  listing transport failures; composer insertion and the clipboard fallback; the
+  button's labels; the host-artwork path and its fallback; the row's box model;
+  size formatting, width tiers, sort comparators, the header sort cycle with its
+  persistence, and the tier CSS; the quick filter (debounce, result list, chip,
+  clearing) and reveal expansion; tree semantics (`role` / `aria-level` /
+  `aria-expanded`) and the keyboard-navigation branches; and a rendered-tree
   smoke test through a minimal React shim (rows, dates, `@` buttons, a directory
   click, a failure line, the no-workspace state, and both click paths).
 - `dsh --profile web --patch ./cordis.patch.yml --dump-config` — the patch layer
   composes and the `dsh-at-sider` row lands in the composed profile.
-- The published artifact: installed from the npm registry into a scratch prefix,
-  imported by name, and checked for its `dsh.client` / `dsh.bundle` declarations.
+- The published artifacts: installed from the npm registry into a scratch prefix,
+  imported by name, and checked for their `dsh.client` / `dsh.bundle`
+  declarations (0.0.1–0.0.4 done at their releases; 0.1.0 published from this
+  checkout).
 
 Not verified: the rendered GUI itself, and therefore the actual visual result,
 could not be checked in this environment (installing into the profile and
-restarting `dsh web` were left to the operator).
+restarting `dsh web` were left to the operator). The operator has since verified
+the quick filter and keyboard navigation on a live profile (v0.1.0), and reported
+the reveal highlight and the menu font size as issues — both fixed in 0.1.0.

@@ -28,7 +28,7 @@
 | R3 | **自动刷新 + 页头**：复用原生 `workspaceFiles.changes` 目录监听（不轮询）、重新读取按钮、自动刷新开关、根路径标签 | v0.0.1 | ✅ |
 | R4 | **入口保留**：引导页胶囊（order 10 + `workspace.files` 快捷键）、标签 chip 标题 | v0.0.1 | ✅ |
 | F1 | **修复时间列被裁切**：行原为 `content-box`，`width:100%` + 自身 padding 溢出 20px；改回 `border-box` | v0.0.2 | ✅ |
-| F2 | **图标恢复宿主原生**：`FileTypeIcon` + `classifyFileType`（按类型着色）、`IconFolder*Regular`、`GuideArtworkFiles`，运行时读取、`try`/`catch` + 导出形状校验，自带字形仅兜底（DESIGN §6"有界破例"） | v0.0.2 | ✅ |
+| F2 | **图标恢复宿主原生**：`FileTypeIcon` + `classifyFileType`（按类型着色）、`IconFolder*Regular`、`GuideArtworkFiles`，运行时读取、`try`/`catch` + 导出形状校验，自带字形仅兜底（DESIGN §9"有界破例"） | v0.0.2 | ✅ |
 | D1 | **README 结构对齐 dsh-pubmed**：中文主文档 + `README_EN.md` + npm/dsh-plugin.org badges + 完整安装步骤 | v0.0.2 | ✅ |
 
 ### 1.2 验证手段
@@ -156,7 +156,7 @@
 - **隐藏点文件开关**（原 R14）——点文件与原生一致地直接显示（用户决策，2026-09）。
 - **写操作（重命名/删除/移动）**：原生服务明确"no mutation"，`ctx.fs` 词汇表亦无对应能力；绕过策略缝做写操作风险大于价值，且与"agent 是写者"的定位冲突。最多评估"新建文件"（`ctx.fs.writeText` 的 `createIfAbsent` 语义现成）。
 - **内嵌编辑器/预览**：文档预览 tab 已存在，不重复造轮子。
-- **自绘图标**：一律运行时读取宿主 artwork（DESIGN §6）；自带字形仅作宿主不可用时的兜底。
+- **自绘图标**：一律运行时读取宿主 artwork（DESIGN §9）；自带字形仅作宿主不可用时的兜底。
 - **TypeScript / 构建管线迁移**：零依赖纯 JS 免构建是 GitHub 直装与可审计的优势。
 - **非 web 平台专门适配**：`dsh.client.platform: "web"`；兜底字形保证其他 shell 不崩即可。
 - **替代 DESIGN.md 的详细设计**——本文只做总览与状态追踪。

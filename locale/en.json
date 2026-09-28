@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "Files+ (@ reference & modified time)",
-    "description": "The native sidebar file tree with an @ reference button on every row and each entry's modification time pinned to the right, with a full local-time tooltip."
+    "title": "Files+ (@ reference, modified time, quick locate)",
+    "description": "The native sidebar file tree, enhanced: an @ reference button on every row plus pinned modification-time and size columns, sortable and width-adaptive columns, a whole-workspace quick filter, reveal-in-tree and one-click @ from file previews, a runtime toggle back to the native tree, and full keyboard navigation with tree semantics."
   }
 }

@@ -5,9 +5,11 @@
 [![npm version](https://img.shields.io/npm/v/dsh-at-sider)](https://www.npmjs.com/package/dsh-at-sider)
 [![Listed on dsh-plugin.org](https://dsh-plugin.org/badges/listed.svg)](https://dsh-plugin.org/plugins/aiyacharley/dsh-at-sider)
 
-> **给原生侧边栏文件树补上「@ 引用 + 修改时间」**：不换标签页、不改入口、不重绘图标——
+> **给原生侧边栏文件树补上「@ 引用 · 修改时间 · 大小 · 排序 · 快速定位」**：不换标签页、不改入口、不重绘图标——
 > 右侧栏的 **文件** 标签页还是原生那一个（同一 `Mod+P`、同一引导页胶囊、同一套图标与打开方式），
-> 只是每一行多了一个紧跟文件名的 **`@文件` 引用按钮**，和行尾固定的 **修改时间**。
+> 只是每一行多了紧跟文件名的 **`@文件` 引用按钮**，行尾多了 **大小 / 修改时间** 两列（宽度自适应、可排序），
+> 页头多了 **全工作区搜索框**；预览页签右键可一键 **`@文件`** 或 **定位到树中该行**，
+> 需要对照原生时右键「文件」页签即可**切回原生树**——全键盘可操作。
 
 ---
 
@@ -123,22 +125,28 @@ dsh plugin --profile web add dsh-at-sider@latest
 
 原生文件树没有 per-row 扩展点（行组件是模块私有的，该包也没有声明任何行内 slot），想要更丰富的行只能自己提供 body：以 `extension` 优先级注册一个**同 kind**（`files`）的 tab 类型即可接管 builtin，其 body/title 按定义自身的 `id` 分派，因此不存在 key 冲突。
 
-修改时间在任何 Client 侧数据源里都不存在：`workspaceFiles` 的目录条目只有 `{ name, type, size? }`，文件 `version` 令牌按契约不可解析。因此 Host 半自己提供一条受鉴权保护的路由：
+修改时间在任何 Client 侧数据源里都不存在：`workspaceFiles` 的目录条目只有 `{ name, type, size? }`，文件 `version` 令牌按契约不可解析。因此 Host 半自己提供两条受鉴权保护的路由：
 
 ```
-POST /api/dsh-at-sider/list   { sessionId, path }
+POST /api/dsh-at-sider/list     { sessionId, path }
   -> { ok: true, value: { path, root, entries: [{ name, type, mtimeMs, size? }], truncated } }
+
+POST /api/dsh-at-sider/search   { sessionId, query }
+  -> { ok: true, value: { query, matches: [{ name, path, dir, type, mtimeMs, size? }], truncated } }
 ```
 
-列表被限制在会话工作区根内（请求路径先对根解析，越界即拒绝），每层最多 2000 条，`stat` 并发上限 32，且只做只读列表（绝不读取文件内容）。完整的取舍记录与被否决的替代方案见 [docs/DESIGN.md](docs/DESIGN.md)。
+两条路由都被限制在会话工作区根内（请求路径先对根解析，越界即拒绝），只做只读访问（绝不读取文件内容）。列表每层最多 2000 条、`stat` 并发上限 32；搜索递归整个工作区，跳过 `node_modules`/`.git`、不进入符号链接目录、深度上限 12、结果上限 200，且只对命中项取 `mtimeMs`。
+
+页面侧的另外三处机制：**动作菜单**（`sidebar.right.tab.menu.item` 列表 seat，条目拿到自己所在的 `tab` 与 `dismiss`）承载「回退原生」「在文件树中定位」「@文件」；**运行时回退**靠注销/重注册 tab 类型定义实现（注销后 builtin 立即恢复）；**定位**通过 `openTab('files', { params: { reveal } })` 把目标路径交给文件树，body 依 `tab.navigation.params` 展开祖先链并高亮该行。完整的取舍记录与被否决的替代方案见 [docs/DESIGN.md](docs/DESIGN.md)。
 
 ---
 
 ## 已知限制
 
-- 内置 `files` body 是被**遮蔽**而非组合：本插件加载期间原生树不渲染；卸载后**原样恢复**（本插件不修改任何原生代码）。
-- 修改时间来自 `node:fs`（`ctx.fs` 不暴露时间字段），位于其策略缝之外；该路由因此自带工作区包含性校验。
-- Client 半镜像了原生树的少量私有细节（行序、`dsh-resource://` 地址文法、输入框引用插入调用）。每处都有降级路径（输入框不可达则退化为复制；watch 不可用则退回手动刷新）；构建与测试所依据的版本写在 `package.json` 的 `dsh.compatibility`。
+- 内置 `files` body 是被**遮蔽**而非组合：本插件加载期间原生树不渲染；卸载后**原样恢复**，或随时右键「文件」页签用「回退原生文件树」即时切回（本插件不修改任何原生代码）。
+- 切换回退会让增强树的展开状态重置（状态在组件内，未迁入 slot store，见 ROADMAP R30）；回退是运行时开关，重启后默认回到增强态。
+- 修改时间与搜索都依赖 `node:fs`（`ctx.fs` 不暴露时间字段），位于其策略缝之外；两条路由因此都自带工作区包含性校验。
+- Client 半镜像了原生树的少量私有细节（行序、`dsh-resource://` 地址文法、输入框引用插入调用、页签动作菜单 seat、`openTab` 的导航参数与 `TabRecord.contentId`）。每处都有降级路径（输入框不可达则退化为复制；watch 不可用则退回手动刷新；菜单 seat 缺失只是少两个菜单条目）；构建与测试所依据的版本写在 `package.json` 的 `dsh.compatibility`。
 - 插件自带的简单字形只在宿主图标不可用时兜底，正常环境下不会出现。
 
 ---
@@ -161,8 +169,8 @@ dsh plugin --profile web add dsh-at-sider@latest
 【请帮我持久化安装 dsh-at-sider（重启后所有会话可用）】
 1) 确认 DSH profile 名称（如 web；不确定就先问）。
 2) 运行 dsh plugin --profile <名称> add dsh-at-sider@latest。
-3) 提示用户重启 DSH web（Host 半的列表路由需要重启才注册）。
-4) 重启后自检：右侧栏「文件」标签页悬停任意行应出现 @文件，行尾应显示修改时间。
+3) 提示用户重启 DSH web（Host 半的列表与搜索路由需要重启才注册）。
+4) 重启后自检：右侧栏「文件」标签页悬停任意行应出现 @文件、行尾应有大小与修改时间；页头应有搜索框；右键「文件」页签菜单里应有「回退原生文件树」；打开任一文件预览后右键该页签应有「在文件树中定位」与「@文件」。
 ````
 
 **3. 手动（可选）**
@@ -174,7 +182,7 @@ dsh plugin --profile web add dsh-at-sider@latest
 ### 更新
 
 ```bash
-dsh plugin --profile web update dsh-at-sider@latest     # 或 @0.0.2 指定版本
+dsh plugin --profile web update dsh-at-sider@latest     # 或 @0.1.0 指定版本
 ```
 
 更新后**重启 DSH** 生效。
@@ -183,7 +191,7 @@ dsh plugin --profile web update dsh-at-sider@latest     # 或 @0.0.2 指定版�
 
 - 一条命令：`dsh plugin --profile web remove dsh-at-sider` → 重启；
 - 本地 link 安装：从 profile 的 `package.json` 删掉依赖与 `dsh.profile.bundles` 里的条目，再 `pnpm install` → 重启；
-- 卸载后原生文件树原样恢复。
+- 卸载后原生文件树原样恢复；只是想在增强版与原生之间来回切，不需要卸载——右键「文件」页签用「回退原生文件树」即可。
 
 > 排查（装了却没变化、时间列为空等）见 [docs/INSTALL.md](docs/INSTALL.md)。
 
@@ -196,7 +204,7 @@ npm test          # node --test，65 个用例，全离线（无网络、无浏�
 ```
 
 - 本插件**无依赖、无构建**：`client.js` 就是浏览器模块加载器格式的最终产物，`index.js` 就是 Host 端入口；
-- 测试按模块系统的实际加载方式载入 `client.js`（在 `new Function` 中注入 `window`、`navigator`、`fetch`），并用极小的 React shim 驱动真实组件：包含性校验、每层列表与 `mtimeMs`、路由契约、接管定义、`@路径` 文法与资源地址、输入框插入与剪贴板降级、按钮标签、宿主图标路径与其兜底、行盒模型，以及整棵树的渲染冒烟；
+- 测试按模块系统的实际加载方式载入 `client.js`（在 `new Function` 中注入 `window`、`navigator`、`fetch`），并用极小的 React shim 驱动真实组件：包含性校验、每层列表与 `mtimeMs`、两条路由的契约（列表 + 搜索的跳过清单/上限/深度）、接管定义与运行时开关、菜单条目可见性、`@路径` 文法与资源地址解析、输入框插入与剪贴板降级、按钮标签、宿主图标路径与其兜底、行盒模型、树语义（`role`/`aria-level`）、键盘导航分支，以及整棵树的渲染冒烟与快速过滤/定位交互；
 - 变更说明见 [CHANGELOG.md](CHANGELOG.md)，设计取舍见 [docs/DESIGN.md](docs/DESIGN.md)，发布流程见 [PUBLISH.md](PUBLISH.md)。
 
 ---
@@ -226,4 +234,4 @@ MIT，见 [LICENSE](LICENSE)。
 
 - 文件类型判定与图标（`FileTypeIcon`、`classifyFileType`、`IconFolder*Regular`、`GuideArtworkFiles`）来自 DSH 自带的
   `@deepseek-ai/dsh-client-ui-primitives`，**运行时读取、不做复制**；插件自带的简单字形仅在其不可用时兜底。
-- tab 接管、`@路径` 引用、修改时间列表与 `/api` 列表路由为本插件原创实现。
+- tab 接管与运行时回退、`@路径` 引用、修改时间/大小列、排序与自适应、快速过滤与搜索路由、定位与页签菜单条目、键盘导航与树语义，均为本插件原创实现。

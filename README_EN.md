@@ -5,11 +5,16 @@
 [![npm version](https://img.shields.io/npm/v/dsh-at-sider)](https://www.npmjs.com/package/dsh-at-sider)
 [![Listed on dsh-plugin.org](https://dsh-plugin.org/badges/listed.svg)](https://dsh-plugin.org/plugins/aiyacharley/dsh-at-sider)
 
-> **An `@` reference button and a modification-time column for the native sidebar
-> file tree.** Same tab, same entry point, same icons, same way of opening files —
-> the right sidebar's **Files** tab stays the native one (same `Mod+P`, same guide
-> capsule, same artwork); each row simply gains a **`@file` chip** right after the
-> name and the entry's **modification time** pinned to its far right.
+> **An `@` reference button, a modification-time and size column, sorting, a quick
+> filter and locate for the native sidebar file tree.** Same tab, same entry point,
+> same icons, same way of opening files — the right sidebar's **Files** tab stays
+> the native one (same `Mod+P`, same guide capsule, same artwork). Each row simply
+> gains a **`@file` chip** right after the name plus its **size and modification
+> time** pinned to the far right (width-adaptive, sortable); the header gains a
+> **whole-workspace search box**; right-clicking a file preview offers one-click
+> **`@file`** and **reveal in tree**; and right-clicking the Files tab **switches
+> back to the native tree** whenever you want to compare — all of it keyboard
+> operable.
 
 ---
 
@@ -148,33 +153,53 @@ definition's own `id` — so there is no key collision.
 
 No Client seam carries a modification time: `workspaceFiles` entries are
 `{ name, type, size? }`, and the file `version` token is opaque by contract. The
-Host half therefore serves one authenticated route of its own:
+Host half therefore serves two authenticated routes of its own:
 
 ```
-POST /api/dsh-at-sider/list   { sessionId, path }
+POST /api/dsh-at-sider/list     { sessionId, path }
   -> { ok: true, value: { path, root, entries: [{ name, type, mtimeMs, size? }], truncated } }
+
+POST /api/dsh-at-sider/search   { sessionId, query }
+  -> { ok: true, value: { query, matches: [{ name, path, dir, type, mtimeMs, size? }], truncated } }
 ```
 
-The listing is confined to the session's workspace root (the path is resolved
-against it and refused when it escapes), reads at most 2000 entries per level,
-stats with a concurrency cap of 32, and never reads file contents.
-[docs/DESIGN.md](docs/DESIGN.md) records every alternative that was evaluated and
-rejected.
+Both are confined to the session's workspace root (the path is resolved against
+it and refused when it escapes) and are read-only (file contents are never
+read). The listing reads at most 2000 entries per level and caps `stat`
+concurrency at 32; the search walks the whole workspace, skipping
+`node_modules`/`.git`, never descending into symlinked directories, with a depth
+cap of 12 and 200 results, and stats only the matches.
+
+Three further Client mechanisms: the **action menu**
+(`sidebar.right.tab.menu.item`, a list seat whose entries receive the `tab` they
+belong to plus `dismiss`) carries 「use the native file tree」, 「reveal in file
+tree」 and 「@file」; the **runtime fallback** dispose/re-registers the tab-type
+definition (the builtin resumes the moment it is unregistered); **reveal** hands
+the target path to the tree through `openTab('files', { params: { reveal } })`,
+and the body expands the ancestor chain and flashes the row from
+`tab.navigation.params`. [docs/DESIGN.md](docs/DESIGN.md) records every
+alternative that was evaluated and rejected.
 
 ---
 
 ## Known limitations
 
 - The builtin `files` body is **shadowed**, not composed: while this plugin is
-  loaded the native tree does not render; uninstalling restores it exactly (no
-  native code is modified).
-- Modification times come from `node:fs` (the `ctx.fs` seam exposes no time
-  field), so the route carries its own workspace containment.
+  loaded the native tree does not render; uninstalling restores it exactly, and
+  right-clicking the Files tab offers 「use the native file tree」 to switch back
+  at runtime (no native code is modified either way).
+- Switching back resets the enhanced tree's expansion state (it lives in
+  component state rather than a slot store — ROADMAP R30), and the toggle is a
+  runtime switch: a restart starts enhanced again.
+- Modification times and the search both come from `node:fs` (the `ctx.fs` seam
+  exposes no time field), so both routes carry their own workspace containment.
 - The Client half mirrors a few private details of the native tree (row ordering,
-  the `dsh-resource://` address grammar, the composer's reference-insertion call).
-  Each has a degradation path — a missing composer falls back to the clipboard, a
-  missing watch falls back to the reload button — and the version this was built
-  and tested against is pinned in `dsh.compatibility`.
+  the `dsh-resource://` address grammar, the composer's reference-insertion call,
+  the tab action-menu seat, `openTab`'s navigation params and
+  `TabRecord.contentId`). Each has a degradation path — a missing composer falls
+  back to the clipboard, a missing watch falls back to the reload button, a
+  missing menu seat simply means two fewer menu entries — and the version this
+  was built and tested against is pinned in `dsh.compatibility`.
 - The plugin's inline glyphs only appear when the host artwork is unavailable.
 
 ---
@@ -197,9 +222,11 @@ dsh plugin --profile web add dsh-at-sider@latest
 [Please install dsh-at-sider persistently (available in every session after a restart)]
 1) Determine the DSH profile name (e.g. web; ask first if unsure).
 2) Run: dsh plugin --profile <name> add dsh-at-sider@latest
-3) Tell the user to restart DSH web (the Host half's listing route registers on boot).
+3) Tell the user to restart DSH web (the Host half's listing and search routes register on boot).
 4) After the restart, verify: hovering a row in the right sidebar's Files tab shows
-   @file, and the row's right edge shows a modification time.
+   @file, the row's right edge shows a size and a modification time, the header has
+   a search box, right-clicking the Files tab offers "use the native file tree", and
+   right-clicking an opened file preview offers "reveal in file tree" and "@file".
 ````
 
 **3. Manual (optional)**
@@ -213,7 +240,7 @@ dsh plugin --profile web add dsh-at-sider@latest
 ### Update
 
 ```bash
-dsh plugin --profile web update dsh-at-sider@latest     # or @0.0.2 to pin
+dsh plugin --profile web update dsh-at-sider@latest     # or @0.1.0 to pin
 ```
 
 Restart DSH for the change to take effect.
@@ -241,10 +268,13 @@ npm test          # node --test, 65 cases, fully offline (no network, no browser
 - The suite loads `client.js` the way the module system does — inside
   `new Function`, with `window`, `navigator` and `fetch` injected — and drives the
   real components through a minimal React shim: containment, per-level listing and
-  `mtimeMs`, the route contract, the takeover definition, the `@path` grammar and
-  resource addresses, composer insertion with its clipboard fallback, the button
-  labels, the host-artwork path and its fallback, the row box model, and a
-  rendered-tree smoke test.
+  `mtimeMs`, both route contracts (listing plus the search skip list, result cap
+  and depth cap), the takeover definition and its runtime toggle, menu-entry
+  visibility, the `@path` grammar and address parsing, composer insertion with its
+  clipboard fallback, the button labels, the host-artwork path and its fallback,
+  the row box model, tree semantics (`role`/`aria-level`), the keyboard navigation
+  branches, and a rendered-tree smoke test plus the quick-filter and reveal
+  interactions.
 - Changes: [CHANGELOG.md](CHANGELOG.md). Design: [docs/DESIGN.md](docs/DESIGN.md).
   Releasing: [PUBLISH.md](PUBLISH.md).
 
@@ -304,5 +334,7 @@ MIT. See [LICENSE](LICENSE).
   `IconFolder*Regular`, `GuideArtworkFiles`) come from the DSH-shipped
   `@deepseek-ai/dsh-client-ui-primitives` and are **read at runtime, not copied**;
   the plugin's inline glyphs are only a fallback.
-- The tab takeover, the `@path` references and the modification-time listing route
-  are original to this plugin.
+- The tab takeover and its runtime fallback, the `@path` references, the
+  modification-time and size columns, sorting and width adaptation, the quick
+  filter and its search route, reveal-in-tree and the tab-menu entries, and the
+  keyboard navigation with tree semantics are all original to this plugin.
