@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Files+">
+  <path d="M8 50V16a4 4 0 0 1 4-4h13l6 7h21a4 4 0 0 1 4 4v27a4 4 0 0 1-4 4H12a4 4 0 0 1-4-4Z"
+        fill="none" stroke="#247bbf" stroke-width="4" stroke-linejoin="round"/>
+  <text x="24" y="46" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="22"
+        font-weight="600" fill="#247bbf">@</text>
+  <g stroke="#7a8794" stroke-width="4" stroke-linecap="round">
+    <path d="M47 33h7"/>
+    <path d="M47 41h7"/>
+    <path d="M47 49h4"/>
+  </g>
+</svg>

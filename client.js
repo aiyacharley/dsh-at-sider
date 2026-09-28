@@ -1,0 +1,799 @@
+/**
+ * dsh-at-sider — Client half.
+ *
+ * The native right-sidebar file tree has no per-row extension point: its rows are
+ * module-local and the package declares no row seat. The sanctioned way to change
+ * what a tab draws is therefore a tab-type takeover: a definition registered at
+ * priority `extension` with the SAME kind (`files`) is the one in force, and its
+ * body/title are looked up under the definition's own `id`. So this plugin
+ * registers its own tree body — same entry point (Files tab, `Mod+P`, the guide
+ * capsule), plus two additions on every row:
+ *
+ *   - an `@` reference button right after the file name: it inserts the canonical
+ *     `@path` mention into the composer (the same chip the built-in `@` completion
+ *     and the built-in file drop produce), and falls back to copying the mention
+ *     when no composer is reachable (or on Alt/⌥-click, on purpose);
+ *   - the modification time pinned to the row's far right, with the full local
+ *     time as its tooltip.
+ *
+ * Modification time is not available from any Harness Client seam (the
+ * `workspaceFiles` listing carries `{ name, type, size? }` and its `version`
+ * token is opaque), so the Host half of this plugin serves it over its own
+ * authenticated route; this file only consumes it.
+ */
+window.__ModuleLoader__.load({
+  id: 'dsh-at-sider',
+  factory(require) {
+    const React = require('react')
+    const h = React.createElement
+
+    /**
+     * The live client plugin context, captured by `apply`. Components read the
+     * two optional services (`sessions`, `conversation`) through it at click
+     * time; everything else arrives in slot props.
+     */
+    let pluginCtx
+
+    /** This implementation's identity, and the key its body/title register under. */
+    const ID = 'dsh-at-sider'
+    /** The native tab kind this plugin enhances rather than replaces. */
+    const KIND = 'files'
+    /** Locale namespace owned by this plugin. */
+    const NS = 'atSider'
+    /** The Host route that serves the listing with modification times. */
+    const ROUTE_PATH = '/api/dsh-at-sider/list'
+    /** How long a row's `@` button shows its outcome before returning to the glyph. */
+    const FEEDBACK_MS = 1400
+    /** Coalescing window for watch-driven rereads, so one save cannot thrash a level. */
+    const REFRESH_DEBOUNCE_MS = 150
+
+    // ───────────────────────────── styles ─────────────────────────────
+    // Own prefix, host theme tokens only, copied from the native tree's own
+    // metrics so the takeover is visually indistinguishable where it should be.
+    const STYLE_TAG_ID = `${ID}/sidebar.css`
+    const cssText = `
+.ats-root{height:100%;min-height:0;color:var(--dsw-alias-label-primary);font-size:var(--dsh-content-font-size-secondary,13px);flex-direction:column;flex:auto;line-height:1.5;display:flex}
+.ats-header{box-sizing:border-box;border-bottom:.5px solid var(--dsw-alias-border-l3);flex:none;align-items:center;gap:4px;height:38px;padding:0 6px 0 16px;display:flex}
+.ats-path{overflow:hidden;white-space:nowrap;text-overflow:ellipsis;margin-right:12px;min-width:0;flex:1 1 auto}
+.ats-body{scrollbar-gutter:stable;flex:auto;min-height:0;margin-right:2px;padding:8px 0 8px 8px;overflow:auto}
+.ats-body::-webkit-scrollbar-track{margin:2px}
+.ats-level{margin:0;padding:0;list-style:none}
+.ats-level .ats-level{padding-left:18px}
+.ats-item{margin:0;padding:0}
+.ats-row{width:100%;min-width:0;color:inherit;font:inherit;text-align:left;border-radius:var(--dsw-radius-md);cursor:pointer;align-items:center;gap:6px;padding:5px 10px;display:flex}
+.ats-row:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.ats-row:focus-visible{outline:2px solid var(--dsw-alias-label-primary);outline-offset:-2px}
+.ats-main{align-items:center;gap:6px;min-width:0;flex:0 1 auto;display:flex}
+.ats-icon{color:var(--dsw-alias-label-tertiary);flex:none}
+.ats-name{white-space:nowrap;text-overflow:ellipsis;min-width:0;overflow:hidden}
+.ats-other{color:var(--dsw-alias-label-tertiary);cursor:default}
+.ats-row.ats-otherRow:hover{background:0 0}
+.ats-ref{flex:none;opacity:0;color:var(--dsw-alias-label-secondary);background:0 0;border:none;border-radius:var(--dsw-radius-sm);cursor:pointer;font:inherit;line-height:1;padding:0 3px}
+.ats-row:hover .ats-ref,.ats-ref:focus-visible{opacity:1}
+.ats-ref:hover{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}
+.ats-ref.ats-refFlash{opacity:1;color:var(--dsw-alias-label-primary);white-space:nowrap}
+.ats-mtime{margin-left:auto;flex:none;white-space:nowrap;font-size:11px;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-tertiary)}
+.ats-tool{width:28px;height:28px;color:var(--dsw-alias-label-secondary);border-radius:var(--dsw-radius-sm);cursor:pointer;background:0 0;border:none;flex:none;justify-content:center;align-items:center;padding:6px;line-height:1;display:inline-flex}
+.ats-tool svg{width:15px;height:15px}
+.ats-tool:hover,.ats-tool[aria-pressed=true]{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}
+.ats-note{color:var(--dsw-alias-label-tertiary);margin:0;padding:3px 10px;font-size:12px}
+.ats-status{flex-direction:column;padding:12px 10px;display:flex}
+.ats-statusLine{color:var(--dsw-alias-label-secondary);font-size:var(--dsh-content-font-size-secondary,13px);margin:0;line-height:1.6}
+.ats-titleIcon{flex:none}
+.ats-srOnly{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+@media (hover:none){.ats-ref{opacity:1}}
+`
+    const css = {
+      root: 'ats-root',
+      header: 'ats-header',
+      path: 'ats-path',
+      body: 'ats-body',
+      level: 'ats-level',
+      item: 'ats-item',
+      row: 'ats-row',
+      main: 'ats-main',
+      icon: 'ats-icon',
+      name: 'ats-name',
+      other: 'ats-other',
+      otherRow: 'ats-otherRow',
+      ref: 'ats-ref',
+      refFlash: 'ats-refFlash',
+      mtime: 'ats-mtime',
+      tool: 'ats-tool',
+      note: 'ats-note',
+      status: 'ats-status',
+      statusLine: 'ats-statusLine',
+      titleIcon: 'ats-titleIcon',
+    }
+
+    /** Install the stylesheet once per document; unload leaves it for the next load to reuse. */
+    function installStyles() {
+      if (typeof document === 'undefined') return
+      if (document.querySelector(`style[data-plugin-css=${JSON.stringify(STYLE_TAG_ID)}]`) !== null) return
+      const tag = document.createElement('style')
+      tag.dataset.plugin = ID
+      tag.dataset.pluginCss = STYLE_TAG_ID
+      tag.textContent = cssText
+      document.head.appendChild(tag)
+    }
+
+    // ───────────────────────────── helpers ─────────────────────────────
+    /** Natural, case-insensitive name order, so `file2` precedes `file10`. */
+    const byName = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
+
+    /**
+     * Order one level for display: directories first, then by name.
+     * @param {readonly { name: string, type: string }[]} entries - listed entries.
+     * @returns {object[]} a new, ordered array.
+     */
+    function orderEntries(entries) {
+      return [...entries].sort((left, right) => {
+        const group = Number(right.type === 'directory') - Number(left.type === 'directory')
+        return group !== 0 ? group : byName.compare(left.name, right.name)
+      })
+    }
+
+    /**
+     * The absolute path of one child: joined with `/` whatever the parent's
+     * separators, so a level key stays stable across platforms.
+     * @param {string} parent - absolute listed directory.
+     * @param {string} name - the child's basename.
+     * @returns {string} the child's absolute path.
+     */
+    function childPath(parent, name) {
+      return `${parent.replace(/[/\\]+$/, '')}/${name}`
+    }
+
+    /** `YYYY-MM-DD HH:mm` in local time: fixed width, no locale drift. */
+    function formatMtime(mtimeMs) {
+      if (typeof mtimeMs !== 'number' || !Number.isFinite(mtimeMs)) return ''
+      const date = new Date(mtimeMs)
+      const pad = (value) => String(value).padStart(2, '0')
+      return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+    }
+
+    /** The full local time for a row's tooltip. */
+    function formatFullMtime(mtimeMs) {
+      if (typeof mtimeMs !== 'number' || !Number.isFinite(mtimeMs)) return ''
+      return new Date(mtimeMs).toLocaleString()
+    }
+
+    /** Whether a path uses a Windows drive or UNC prefix. */
+    function isWindowsStylePath(value) {
+      return /^[A-Za-z]:[/\\]/.test(value) || value.startsWith('\\\\')
+    }
+
+    /**
+     * A path relative to the workspace root when it lives inside it, else the
+     * path as given; `/`-separated either way, `''` for the root itself.
+     * @param {string | undefined} root - the session's workspace root.
+     * @param {string} path - absolute path.
+     * @returns {string} the path to name in a mention.
+     */
+    function relativeToRoot(root, path) {
+      const normalized = path.replace(/\\/g, '/')
+      if (typeof root !== 'string' || root === '') return normalized
+      const base = root.replace(/\\/g, '/').replace(/\/+$/, '')
+      if (base === '') return normalized
+      const fold = isWindowsStylePath(base)
+      const left = fold ? base.toLowerCase() : base
+      const right = fold ? normalized.toLowerCase() : normalized
+      if (right === left) return ''
+      if (right.startsWith(`${left}/`)) return normalized.slice(base.length + 1)
+      return normalized
+    }
+
+    /**
+     * The canonical `@` mention of one entry: the natural text the shared
+     * `@path` grammar defines, quoted when the path carries whitespace and
+     * trailing-slashed for a directory.
+     * @param {string | undefined} root - the session's workspace root.
+     * @param {string} path - the entry's absolute path.
+     * @param {boolean} isDir - whether the entry is a directory.
+     * @returns {string | undefined} the mention, or undefined when unrepresentable.
+     */
+    function mentionFor(root, path, isDir) {
+      const relative = relativeToRoot(root, path)
+      const named = isDir && relative !== '' ? `${relative}/` : relative
+      if (named === '') return undefined
+      if (/[\u0000-\u001f\u007f-\u009f"]/u.test(named)) return undefined
+      return /\s/u.test(named) ? `@"${named}"` : `@${named}`
+    }
+
+    /** Component-encode one id or path segment, keeping `:` literal for drive letters. */
+    function encodeSegment(segment) {
+      return encodeURIComponent(segment).replace(/%3A/gi, ':')
+    }
+
+    /** Encode a `/`-separated path segment by segment. */
+    function encodePath(path) {
+      return path.split('/').map(encodeSegment).join('/')
+    }
+
+    /**
+     * The `dsh-resource://file/session/<id>/<path>` address of one file, built
+     * exactly as the shared workspace-path helper does.
+     * @param {string} sessionId - the authorizing session.
+     * @param {string | undefined} cwd - that session's workspace root.
+     * @param {string} path - absolute or workspace-relative path.
+     * @returns {string} the resource address.
+     */
+    function fileAddressFor(sessionId, cwd, path) {
+      const normalized = path.replace(/\\/g, '/').replace(/^(?:\.\/)+/, '')
+      const inside = (() => {
+        if (!(/^[A-Za-z]:\//.test(normalized) || normalized.startsWith('/') || normalized.startsWith('\\\\'))) return normalized
+        const root = typeof cwd === 'string' ? cwd.replace(/\\/g, '/').replace(/\/+$/, '') : ''
+        const fold = isWindowsStylePath(root)
+        const left = fold ? root.toLowerCase() : root
+        const right = fold ? normalized.toLowerCase() : normalized
+        if (root === '' ) return normalized
+        if (right === left) return ''
+        if (right.startsWith(`${left}/`)) return normalized.slice(root.length + 1)
+        return normalized
+      })()
+      return `dsh-resource://file/session/${encodeSegment(sessionId)}/${encodePath(inside)}`
+    }
+
+    /** Accept one host entry, dropping anything malformed. */
+    function entryOf(raw) {
+      if (typeof raw !== 'object' || raw === null) return undefined
+      const name = typeof raw.name === 'string' ? raw.name : undefined
+      if (name === undefined || name === '') return undefined
+      const type = raw.type === 'directory' || raw.type === 'file' || raw.type === 'other' ? raw.type : 'other'
+      const entry = { name, type }
+      if (typeof raw.mtimeMs === 'number' && Number.isFinite(raw.mtimeMs)) entry.mtimeMs = raw.mtimeMs
+      if (typeof raw.size === 'number' && Number.isFinite(raw.size)) entry.size = raw.size
+      return entry
+    }
+
+    /** One failure value, in the shape the tree renders. */
+    function failureOf(code, message) {
+      return { code, message }
+    }
+
+    /**
+     * Read one directory level through this plugin's Host route.
+     * @param {string} sessionId - the authorizing session.
+     * @param {string} path - absolute directory path.
+     * @param {AbortSignal} [signal] - caller cancellation.
+     * @returns {Promise<{ ok: true, value: object } | { ok: false, error: { code: string, message: string } }>} the level.
+     */
+    async function listDirectory(sessionId, path, signal) {
+      try {
+        const response = await fetch(ROUTE_PATH, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ sessionId, path }),
+          credentials: 'same-origin',
+          signal,
+        })
+        let payload
+        try {
+          payload = await response.json()
+        } catch {
+          return { ok: false, error: failureOf('unavailable', `HTTP ${response.status}`) }
+        }
+        if (typeof payload !== 'object' || payload === null) {
+          return { ok: false, error: failureOf('unavailable', `HTTP ${response.status}`) }
+        }
+        if (payload.ok === true) {
+          const value = payload.value
+          const entries = Array.isArray(value?.entries) ? value.entries.map(entryOf).filter((entry) => entry !== undefined) : undefined
+          if (entries === undefined) return { ok: false, error: failureOf('unavailable', 'malformed listing') }
+          return {
+            ok: true,
+            value: {
+              path: typeof value.path === 'string' ? value.path : path,
+              root: typeof value.root === 'string' ? value.root : undefined,
+              entries,
+              truncated: value.truncated === true,
+            },
+          }
+        }
+        const error = payload.error
+        return {
+          ok: false,
+          error: failureOf(
+            typeof error?.code === 'string' ? error.code : 'unavailable',
+            typeof error?.message === 'string' ? error.message : `HTTP ${response.status}`,
+          ),
+        }
+      } catch (cause) {
+        if (signal?.aborted === true) return { ok: false, error: failureOf('aborted', 'aborted') }
+        return { ok: false, error: failureOf('unavailable', cause instanceof Error ? cause.message : String(cause)) }
+      }
+    }
+
+    /** Copy one mention to the clipboard; false when the browser refuses. */
+    async function copyText(text) {
+      try {
+        if (typeof navigator !== 'undefined' && navigator.clipboard !== undefined
+          && typeof navigator.clipboard.writeText === 'function') {
+          await navigator.clipboard.writeText(text)
+          return true
+        }
+      } catch {
+        return false
+      }
+      return false
+    }
+
+    /**
+     * Insert one reference chip into the session's composer — the same
+     * `{ insert: ReferenceInsert }` outcome the built-in `@` source and the
+     * built-in file drop produce. Optional services are read defensively so a
+     * profile without a conversation surface simply falls back to copying.
+     * @param {object} ctx - the client plugin context.
+     * @param {string} sessionId - the session whose composer receives the chip.
+     * @param {{ source: string, ref: string, label: string, appearance: string, clipboardText: string }} reference - the chip.
+     * @returns {boolean} whether the input machine applied it.
+     */
+    function insertReference(ctx, sessionId, reference) {
+      const sessions = typeof ctx?.get === 'function' ? ctx.get('sessions') : undefined
+      const scope = typeof sessions?.scope === 'function' ? sessions.scope(sessionId) : undefined
+      if (scope === undefined || scope === null) return false
+      const conversation = ctx.get('conversation')
+      const resolver = conversation?.input
+      const input = typeof resolver?.for === 'function' ? resolver.for(scope) : undefined
+      const addFiles = input?.addFiles
+      if (typeof addFiles !== 'function') return false
+      return addFiles.call(input, [reference], []) === true
+    }
+
+    // ───────────────────────────── icons ─────────────────────────────
+    const svgProps = (size) => ({
+      width: size,
+      height: size,
+      viewBox: '0 0 16 16',
+      'aria-hidden': true,
+      focusable: false,
+      fill: 'none',
+      stroke: 'currentColor',
+      strokeWidth: 1.3,
+      strokeLinecap: 'round',
+      strokeLinejoin: 'round',
+    })
+
+    /** A folder glyph, open or closed. */
+    function FolderIcon({ open, size = 16, className }) {
+      const props = { ...svgProps(size), className }
+      const path = open
+        ? 'M1.5 12.5V4a1 1 0 0 1 1-1h3.2l1.3 1.6h6a1 1 0 0 1 1 1v1H5.4a1 1 0 0 0-.95.68L3 12.5H1.5Z'
+        : 'M1.5 12V4a1 1 0 0 1 1-1h3.2l1.3 1.6h6.5a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1Z'
+      return h('svg', props, h('path', { d: path }))
+    }
+
+    /** A generic document glyph: one shape for every file kind, host-subdued. */
+    function FileIcon({ size = 16, className }) {
+      return h('svg', { ...svgProps(size), className },
+        h('path', { d: 'M4 1.5h5l3 3v10H4z' }),
+        h('path', { d: 'M9 1.5v3h3' }))
+    }
+
+    /** The refresh control's glyph. */
+    function RefreshIcon() {
+      return h('svg', svgProps(15),
+        h('path', { d: 'M13 8a5 5 0 1 1-1.5-3.6' }),
+        h('path', { d: 'M13.5 2.5v3.2h-3.2' }))
+    }
+
+    /** The auto-refresh toggle's glyph: playing when on, paused when off. */
+    function AutoRefreshIcon({ on }) {
+      return h('svg', svgProps(15), on
+        ? h('path', { d: 'M6 4.5v7M10 4.5v7' })
+        : h('path', { d: 'M6.5 4.2v7.6L12 8z' }))
+    }
+
+    // ───────────────────────────── components ─────────────────────────────
+
+    /** One row's `@` button: insert into the composer, or copy on Alt/⌥-click. */
+    function RefButton({ sessionId, root, path, entry, t }) {
+      const [state, setState] = React.useState('idle')
+      const timer = React.useRef(0)
+      React.useEffect(() => () => {
+        if (timer.current !== 0) window.clearTimeout(timer.current)
+      }, [])
+      const flash = (next) => {
+        setState(next)
+        if (timer.current !== 0) window.clearTimeout(timer.current)
+        timer.current = window.setTimeout(() => setState('idle'), FEEDBACK_MS)
+      }
+      const isDir = entry.type === 'directory'
+      const onClick = async (event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        const mention = mentionFor(root, path, isDir)
+        if (mention === undefined) {
+          flash('failed')
+          return
+        }
+        if (event.altKey !== true) {
+          let inserted = false
+          try {
+            inserted = insertReference(pluginCtx, sessionId, {
+              source: 'reference',
+              ref: mention,
+              label: isDir ? `${entry.name}/` : entry.name,
+              appearance: isDir ? 'folder' : 'file',
+              clipboardText: mention,
+            })
+          } catch {
+            inserted = false
+          }
+          if (inserted) {
+            flash('inserted')
+            return
+          }
+        }
+        flash(await copyText(mention) ? 'copied' : 'failed')
+      }
+      const label = state === 'idle' ? '@' : t(`ref.${state}`)
+      return h('button', {
+        type: 'button',
+        className: state === 'idle' ? css.ref : `${css.ref} ${css.refFlash}`,
+        'data-at-sider-ref': path,
+        'aria-label': t('ref.insert'),
+        title: state === 'idle' ? t('ref.tip') : label,
+        onClick,
+      }, label)
+    }
+
+    /** The Level/Entry pair is mutually recursive, so both are function declarations. */
+
+    /** One entry's row, and its children when it is an expanded directory. */
+    function Entry(props) {
+      const { entry, parent, root, sessionId, expanded, onToggle, onOpen, revision, autoRefresh, t } = props
+      const path = childPath(parent, entry.name)
+      const isDir = entry.type === 'directory'
+      const isOpen = isDir && expanded.includes(path)
+      const name = h('span', { className: css.name, key: 'name' }, entry.name)
+      const children = []
+      if (entry.type === 'other') {
+        children.push(h('span', { className: css.main, key: 'main' }, name))
+      } else {
+        children.push(h('span', { className: css.main, key: 'main' },
+          isDir
+            ? h(FolderIcon, { open: isOpen, className: css.icon })
+            : h(FileIcon, { className: css.icon }),
+          name))
+        children.push(h(RefButton, {
+          key: 'ref',
+          sessionId,
+          root,
+          path,
+          entry,
+          t,
+        }))
+      }
+      if (entry.mtimeMs !== undefined) {
+        children.push(h('span', {
+          key: 'mtime',
+          className: css.mtime,
+          title: formatFullMtime(entry.mtimeMs),
+          'data-at-sider-mtime': entry.mtimeMs,
+        }, formatMtime(entry.mtimeMs)))
+      }
+      const rowProps = {
+        className: entry.type === 'other' ? `${css.row} ${css.other} ${css.otherRow}` : css.row,
+        'data-at-sider-row': entry.type,
+      }
+      if (entry.type !== 'other') {
+        rowProps.role = 'button'
+        rowProps.tabIndex = 0
+        rowProps['aria-expanded'] = isDir ? isOpen : undefined
+        rowProps.onClick = () => (isDir ? onToggle(path) : onOpen(path))
+        rowProps.onKeyDown = (event) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return
+          event.preventDefault()
+          if (isDir) onToggle(path)
+          else onOpen(path)
+        }
+      } else {
+        rowProps['aria-disabled'] = 'true'
+        rowProps.title = t('entry.other')
+      }
+      return h('li', {
+        className: css.item,
+        'data-at-sider-entry': entry.type,
+        'data-at-sider-path': path,
+      },
+      h('div', rowProps, children),
+      isOpen && h('ul', { className: css.level }, h(Level, { ...props, parent: path })))
+    }
+
+    /** One directory's rows: its state while reading, its entries once read. */
+    function Level(props) {
+      const { parent, sessionId, revision, autoRefresh, t } = props
+      const [level, setLevel] = React.useState({ phase: 'loading' })
+      const [pulse, setPulse] = React.useState(0)
+      React.useEffect(() => {
+        const controller = new AbortController()
+        setLevel((previous) => (previous.phase === 'ready' ? previous : { phase: 'loading' }))
+        listDirectory(sessionId, parent, controller.signal).then((result) => {
+          if (controller.signal.aborted) return
+          if (result.ok) {
+            setLevel({ phase: 'ready', entries: result.value.entries, truncated: result.value.truncated })
+            return
+          }
+          setLevel((previous) => (previous.phase === 'ready'
+            ? { ...previous, failure: result.error }
+            : { phase: 'failed', failure: result.error }))
+        })
+        return () => controller.abort()
+      }, [parent, sessionId, revision, pulse])
+      React.useEffect(() => {
+        if (!autoRefresh) return undefined
+        const controller = new AbortController()
+        let timer = 0
+        const remote = pluginCtx?.remote
+        if (typeof remote?.$stream !== 'function' || typeof remote?.workspaceFiles?.changes !== 'function') return undefined
+        const run = async () => {
+          try {
+            const stream = remote.$stream({
+              name: `at-sider directory ${parent}`,
+              open: (lifetime) => remote.workspaceFiles.changes(sessionId, parent, lifetime),
+              ended: () => new Error(`dsh-at-sider: directory watch ended for ${parent}`),
+            })
+            const abort = () => {
+              stream.dispose()
+            }
+            controller.signal.addEventListener('abort', abort, { once: true })
+            try {
+              for await (const item of stream) {
+                if (controller.signal.aborted) return
+                if (item.value?.kind === 'ready') item.accept()
+                if (item.value?.kind !== 'change') continue
+                if (timer !== 0) window.clearTimeout(timer)
+                timer = window.setTimeout(() => setPulse((value) => value + 1), REFRESH_DEBOUNCE_MS)
+              }
+            } finally {
+              controller.signal.removeEventListener('abort', abort)
+              await stream.dispose()
+            }
+          } catch {
+            // A backend without watch support keeps manual reload available.
+          }
+        }
+        run()
+        return () => {
+          controller.abort()
+          if (timer !== 0) window.clearTimeout(timer)
+        }
+      }, [parent, sessionId, autoRefresh])
+      if (level.phase === 'loading') {
+        return h('li', { className: css.note, 'data-at-sider-row': 'loading' }, t('loading'))
+      }
+      if (level.phase === 'failed') {
+        return h('li', {
+          className: css.note,
+          'data-at-sider-row': 'failed',
+          'data-at-sider-code': level.failure.code,
+        }, failureLine(t, level.failure))
+      }
+      const entries = orderEntries(level.entries)
+      return h(React.Fragment, null,
+        level.failure !== undefined && h('li', { className: css.note, 'data-at-sider-row': 'failed' }, failureLine(t, level.failure)),
+        entries.length === 0 && h('li', { className: css.note, 'data-at-sider-row': 'empty' }, t('empty')),
+        entries.map((entry) => h(Entry, { ...props, key: entry.name, entry })),
+        level.truncated && h('li', { className: css.note, 'data-at-sider-row': 'truncated' }, t('truncated')))
+    }
+
+    /** Say why a directory could not be read. */
+    function failureLine(t, failure) {
+      switch (failure.code) {
+        case 'not-found': return t('error.notFound')
+        case 'not-directory': return t('error.notDirectory')
+        case 'outside-workspace': return t('error.outsideWorkspace')
+        case 'no-workspace': return t('error.noWorkspace')
+        case 'permission-denied': return t('error.permission')
+        case 'aborted': return t('error.aborted')
+        default: return t('error.unavailable', { message: failure.message })
+      }
+    }
+
+    /** Where each tab's scroll offset is remembered while the body is unmounted. */
+    const scrollMemory = new Map()
+
+    /** The file tree's body: the session's workspace root and whatever is expanded under it. */
+    function FilesBody({ useTabInfo, sessionId, useSessions, t }) {
+      const { tab } = useTabInfo()
+      const cwd = useSessions((sessions) => sessions.byId[sessionId]?.cwd)
+      const [autoRefresh, setAutoRefresh] = React.useState(true)
+      const [revision, setRevision] = React.useState(0)
+      const [expanded, setExpanded] = React.useState([])
+      const bodyRef = React.useRef(null)
+      const scrollRef = React.useRef(0)
+      const memoryKey = `${tab.id}::${cwd ?? ''}`
+      React.useEffect(() => tab.actions.bindCommands({
+        refresh: () => setRevision((value) => value + 1),
+      }), [tab.actions])
+      React.useLayoutEffect(() => {
+        const body = bodyRef.current
+        const remembered = scrollMemory.get(memoryKey)
+        if (body !== null && remembered !== undefined) {
+          body.scrollTop = remembered
+          scrollRef.current = body.scrollTop
+        }
+      }, [memoryKey])
+      React.useEffect(() => () => {
+        scrollMemory.set(memoryKey, scrollRef.current)
+      }, [memoryKey])
+      if (cwd === undefined) {
+        return h('div', { className: css.status, 'data-at-sider-state': 'no-workspace' },
+          h('p', { className: css.statusLine }, t('noWorkspace')))
+      }
+      const onToggle = (path) => {
+        setExpanded((previous) => (previous.includes(path) ? previous.filter((value) => value !== path) : [...previous, path]))
+      }
+      const onOpen = (path) => {
+        tab.actions.openResource(fileAddressFor(sessionId, cwd, path))
+      }
+      const tree = {
+        sessionId,
+        root: cwd,
+        expanded,
+        onToggle,
+        onOpen,
+        revision,
+        autoRefresh,
+        t,
+      }
+      return h('div', { className: css.root, 'data-at-sider-state': 'tree', 'data-at-sider-root': cwd },
+        h('div', { className: css.header },
+          h('span', { className: css.path, title: cwd, 'data-at-sider-path': cwd }, cwd),
+          h('button', {
+            type: 'button',
+            className: css.tool,
+            'aria-label': t('autoRefresh'),
+            'aria-pressed': autoRefresh,
+            title: t(autoRefresh ? 'autoRefresh.disable' : 'autoRefresh.enable'),
+            'data-at-sider-auto-refresh': true,
+            onClick: () => setAutoRefresh((value) => !value),
+          }, h(AutoRefreshIcon, { on: autoRefresh })),
+          h('button', {
+            type: 'button',
+            className: css.tool,
+            'aria-label': t('reload'),
+            title: t('reload'),
+            'data-at-sider-reload': true,
+            onClick: () => setRevision((value) => value + 1),
+          }, h(RefreshIcon))),
+        h('div', {
+          ref: bodyRef,
+          className: css.body,
+          'data-at-sider-body': true,
+          onScroll: (event) => {
+            scrollRef.current = event.currentTarget.scrollTop
+          },
+        }, h('ul', { className: css.level }, h(Level, { ...tree, parent: cwd }))))
+    }
+
+    /** The tab chip: our folder sheet followed by the tab's title. */
+    function FilesTitle({ useTabInfo }) {
+      const { tab } = useTabInfo()
+      return h(React.Fragment, null, h(FolderIcon, { size: 16, className: css.titleIcon }), tab.title)
+    }
+
+    // ───────────────────────────── registration ─────────────────────────────
+
+    /** The tab type that takes over the native `files` kind. */
+    function definition(t) {
+      return {
+        id: ID,
+        kind: KIND,
+        priority: 'extension',
+        title: () => t('type.label'),
+        guide: [{
+          id: 'workspace',
+          commandId: 'workspace.files',
+          order: 10,
+          title: () => t('guide.title'),
+          description: () => t('guide.description'),
+          icon: (props) => h(FolderIcon, { size: props?.size ?? 16, className: props?.className }),
+        }],
+      }
+    }
+
+    const zh = {
+      'type.label': '文件',
+      'guide.title': '工作区文件',
+      'guide.description': '浏览会话工作区的文件，支持 @ 引用与修改时间',
+      loading: '正在读取…',
+      empty: '空目录',
+      truncated: '条目太多，只显示了一部分。',
+      noWorkspace: '这个会话没有工作区目录。',
+      reload: '重新读取',
+      autoRefresh: '自动刷新',
+      'autoRefresh.enable': '开启自动刷新',
+      'autoRefresh.disable': '关闭自动刷新',
+      'entry.other': '这不是文件或目录，没法打开。',
+      'ref.insert': '引用这个文件',
+      'ref.tip': '插入 @ 引用到输入框；按住 Alt 点击则复制引用文本',
+      'ref.inserted': '已引用',
+      'ref.copied': '已复制',
+      'ref.failed': '失败',
+      'error.notFound': '这个目录不在了。可能已被移动或删除。',
+      'error.notDirectory': '这不是一个目录。',
+      'error.outsideWorkspace': '这个目录在工作区之外，侧栏不会读取它。',
+      'error.noWorkspace': '这个会话没有工作区目录。',
+      'error.permission': '没有读取这个目录的权限。',
+      'error.aborted': '读取已取消。',
+      'error.unavailable': '读取失败：{message}',
+    }
+
+    const en = {
+      'type.label': 'Files',
+      'guide.title': 'Workspace files',
+      'guide.description': "Browse this session's workspace, with @ references and modification times",
+      loading: 'Reading…',
+      empty: 'Empty directory',
+      truncated: 'Too many entries, showing only some of them.',
+      noWorkspace: 'This session has no workspace directory.',
+      reload: 'Reload',
+      autoRefresh: 'Auto refresh',
+      'autoRefresh.enable': 'Enable auto refresh',
+      'autoRefresh.disable': 'Disable auto refresh',
+      'entry.other': 'Not a file or a directory, so it cannot be opened.',
+      'ref.insert': 'Reference this file',
+      'ref.tip': 'Insert an @ reference into the composer; Alt-click to copy the mention instead',
+      'ref.inserted': 'referenced',
+      'ref.copied': 'copied',
+      'ref.failed': 'failed',
+      'error.notFound': 'That directory is gone. It may have been moved or deleted.',
+      'error.notDirectory': 'That is not a directory.',
+      'error.outsideWorkspace': 'That directory is outside the workspace, so the sidebar will not read it.',
+      'error.noWorkspace': 'This session has no workspace directory.',
+      'error.permission': 'That directory is not readable.',
+      'error.aborted': 'The read was cancelled.',
+      'error.unavailable': 'Read failed: {message}',
+    }
+
+    const plugin = {
+      name: ID,
+      inject: ['slots', 'locale', 'sidebarRightTabs', 'remote', 'remote.workspaceFiles'],
+      apply(ctx) {
+        installStyles()
+        const t = ctx.locale.bind(NS)
+        pluginCtx = ctx
+        ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-at-sider: dictionaries')
+        ctx.effect(() => ctx.sidebarRightTabs.register(definition(t)), 'dsh-at-sider: files type takeover')
+        ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({
+          name: 'sidebar.right.pane.tab',
+          key: ID,
+          locale: NS,
+        }, FilesBody)), 'dsh-at-sider: files body')
+        ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab.title', () => ctx.slots.register({
+          name: 'sidebar.right.pane.tab.title',
+          key: ID,
+        }, FilesTitle)), 'dsh-at-sider: files title')
+      },
+    }
+
+    /** Internals for the wiring tests; a non-enumerable key cannot reach the loader. */
+    Object.defineProperty(plugin, '__internals', {
+      value: {
+        ID,
+        KIND,
+        ROUTE_PATH,
+        NS,
+        css,
+        cssText,
+        childPath,
+        copyText,
+        definition,
+        dictionaries: { zh, en },
+        entryOf,
+        fileAddressFor,
+        formatFullMtime,
+        formatMtime,
+        insertReference,
+        listDirectory,
+        mentionFor,
+        orderEntries,
+        relativeToRoot,
+        components: { Entry, FilesBody, FilesTitle, Level, RefButton },
+      },
+    })
+    return plugin
+  },
+})

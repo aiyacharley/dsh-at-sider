@@ -1,0 +1,49 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: 'https://registry.npmjs.org'
+
+      # No dependencies and no build step: the Client artifact is authored
+      # directly in the browser module-loader format, so the suite runs as-is.
+      - name: Run test suite
+        run: node scripts/run-tests.mjs
+
+      - name: Pack npm tarball
+        run: npm pack
+
+      - name: Create GitHub Release with tarball
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dsh-at-sider-*.tgz
+          generate_release_notes: true
+
+      - name: Publish to npm (skipped when the NPM_TOKEN secret is not configured)
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "NPM_TOKEN secret not set — skip npm publish (the release tarball is still attached above)"
+          else
+            npm publish
+          fi
+
+      - name: Sync npmmirror (China users get the new version within a minute)
+        run: node scripts/sync-mirror.mjs

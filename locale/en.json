@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Files+ (@ reference & modified time)",
+    "description": "The native sidebar file tree with an @ reference button on every row and each entry's modification time pinned to the right, with a full local-time tooltip."
+  }
+}

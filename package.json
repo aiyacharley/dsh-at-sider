@@ -1,0 +1,79 @@
+{
+  "name": "dsh-at-sider",
+  "version": "0.1.0",
+  "description": "DeepSeek Harness plugin: adds an @ reference button and a modification-time column to the native right-sidebar file tree, by taking over the builtin `files` tab kind as an extension. The Host half serves each directory's entries with mtimeMs over its own authenticated /api route (the Harness's workspaceFiles listing carries no time); the Client half renders the tree with `@` chips that insert a reference into the composer (Alt-click copies the mention) and a pinned date column with a full local-time tooltip.",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "sidebar",
+    "file-tree",
+    "file-reference",
+    "mtime",
+    "modification-time"
+  ],
+  "license": "MIT",
+  "author": "Chengrui Wang",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiyacharley/dsh-at-sider.git"
+  },
+  "homepage": "https://github.com/aiyacharley/dsh-at-sider#readme",
+  "bugs": {
+    "url": "https://github.com/aiyacharley/dsh-at-sider/issues"
+  },
+  "type": "module",
+  "main": "index.js",
+  "icon": "./icon.svg",
+  "engines": {
+    "node": ">=20"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "icon.svg",
+    "locale/*.json",
+    "docs",
+    "README.md",
+    "README.zh.md",
+    "CHANGELOG.md",
+    "PUBLISH.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node scripts/run-tests.mjs",
+    "test:raw": "node --test test/host.test.mjs test/client.test.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-api-remotes",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-session",
+        "@deepseek-ai/dsh-client-ui-sidebar-right"
+      ]
+    },
+    "compatibility": {
+      "dshReleases": {
+        "0.1.7-rc.2": "compatible"
+      }
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1"
+  }
+}

@@ -1,0 +1,9 @@
+# dsh-at-sider bundle patch.
+#
+# Applied as a profile patch layer after every in-box bundle. Inserts the plugin
+# row at the profile root: the Host half (index.js) registers the listing route
+# under `/api`, and the `dsh.client` declaration in package.json makes the Web
+# app load client.js as the browser half.
+- insert:
+    - id: dsh-at-sider
+      name: 'dsh-at-sider'
