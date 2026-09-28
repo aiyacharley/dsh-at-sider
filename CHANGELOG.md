@@ -1,16 +1,7 @@
 # Changelog
 
-## Unreleased
+## 0.1.0
 
-- Polish: **the reveal highlight now lands on the row itself** and mirrors the
-  keyboard focus ring (2px outline in the label colour). Previously the flash
-  targeted the row's `<li>` and could be swallowed by a React re-render, so it
-  was not visible; the class is also re-asserted during the flash window.
-- Polish: the two tab-menu entries (runtime fallback, reveal) use the host's
-  content font size, matching native menu items such as 「关闭」.
-- Docs: the README documents the right-click gestures for both tab-menu entries
-  (Harness tabs have no ⋯ button), the reveal behaviour, and a keyboard +
-  accessibility reference.
 - Feature: **runtime toggle between the enhanced tree and the native one (R10)**
   — the Files tab's actions menu offers 「回退原生文件树」/「启用增强版文件树」:
   dropping the enhanced definition's registration makes the builtin body resume
@@ -25,13 +16,26 @@
 - Feature: **reveal in file tree (R16)** — file-preview tabs get a
   「在文件树中定位」 menu entry that opens the tree with the ancestors expanded
   and the row scrolled into view and briefly highlighted.
+- Feature: **@文件 on file previews (R16)** — file-preview tabs also get an
+  「@文件」 menu entry that inserts the previewed file's `@` reference into the
+  composer in one step — the same chip the tree's `@` button produces.
 - Feature: **keyboard navigation and tree semantics (R17)** — roving tabindex,
   ArrowUp/Down to move, ArrowRight/Left to expand/collapse (and out to the
   parent), Home/End, and `@` on the focused row to insert a reference;
   `role="tree"`/`treeitem`/`group` with `aria-level` and a polite live region.
-- Tests: 63 — menu-item visibility, the runtime toggle, the search route end to
+- Polish: **the reveal highlight now lands on the row itself** and mirrors the
+  keyboard focus ring (2px outline in the label colour). Previously the flash
+  targeted the row's `<li>` and could be swallowed by a React re-render, so it
+  was not visible; the class is also re-asserted during the flash window.
+- Polish: the two tab-menu entries (runtime fallback, reveal) use the host's
+  content font size, matching native menu items such as 「关闭」.
+- Docs: the README documents the right-click gestures for both tab-menu entries
+  (Harness tabs have no ⋯ button), the reveal behaviour, and a keyboard +
+  accessibility reference.
+- Tests: 65 — menu-item visibility, the runtime toggle, the search route end to
   end (skip list, result cap, depth cap), the quick-filter UI with its
-  debounce, reveal expansion, tree semantics, and keyboard navigation.
+  debounce, reveal expansion, tree semantics, keyboard navigation, and the
+  address parser behind the preview-tab menu entries.
 
 ## 0.0.4
 

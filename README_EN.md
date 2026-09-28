@@ -75,7 +75,9 @@ press `Mod+P`). Three checks:
 | sorting | A header button cycles **name → modified time → size → type**; directories stay first, entries without the field sink to the end, and the mode is remembered (localStorage, best-effort). |
 | adaptive columns | The tree measures its own width in three tiers: ≥380px shows every column; 300–379px hides the size column; below 300px the chip collapses to a bare `@` and the date to `MM-DD HH:mm` — nothing gets clipped in narrow sidebars. |
 | runtime native fallback (R10) | **Right-click the Files tab** → "Use the native file tree": instantly switches back to the native tree (no plugin uninstall needed); the same entry becomes "Use the enhanced file tree" to switch back. Note: Harness tabs have **no ⋯ button — the entry point is the right-click menu**; the enhanced tree's expansion state is not kept across the switch, and a restart starts enhanced. |
-| reveal in file tree (R16) | **Right-click a file-preview tab** → "Reveal in file tree": focuses the tree, expands the ancestor directories, scrolls to the row and briefly highlights it (same outline as the keyboard focus ring). Only offered in the right-click menu of file-preview tabs — not on the Files tab or other tabs. |
+| reveal in file tree (R16) | **Right-click a file-preview tab** → "Reveal in file tree": focuses the tree, expands the ancestor directories, scrolls to the row and briefly highlights it (same outline as the keyboard focus ring). |
+| one-click `@file` from a preview (R16) | **Right-click a file-preview tab** → "@file": inserts the previewed file's reference straight into the composer — exactly what the row's `@` chip does, without going back to the tree to find that row. |
+| where the entries appear | Both entries are offered only in the right-click menu of **file-preview tabs** — not on the Files tab or other tabs. Harness tabs have no ⋯ button, so the entry point is the right-click menu. |
 | icons | The host's own artwork, unchanged: `FileTypeIcon` + `classifyFileType` (category-coloured per file kind), the line-art folder icons, and `GuideArtworkFiles` for the guide capsule — the very components the native tree draws with. Inline glyphs take over only if those exports are unavailable. |
 | header | Workspace root path (full path on hover), an auto-refresh toggle, and a reload button. |
 | rows | Directories first, then natural case-insensitive name order — the native tree's own ordering. |
@@ -231,7 +233,7 @@ Restart DSH for the change to take effect.
 ## Development and tests
 
 ```bash
-npm test          # node --test, 41 cases, fully offline (no network, no browser)
+npm test          # node --test, 65 cases, fully offline (no network, no browser)
 ```
 
 - This plugin has **no dependencies and no build step**: `client.js` is the final
@@ -250,6 +252,16 @@ npm test          # node --test, 41 cases, fully offline (no network, no browser
 
 ## Version history
 
+- **v0.1.0** — first feature release: **runtime native fallback** (right-click the
+  Files tab to switch between the enhanced and native trees — no uninstall
+  needed); **quick filter / locate** (a header box searching the whole workspace
+  recursively — skips node_modules/.git, 200 results — with `@` chips on every
+  result; click a file to open it, click a directory to jump back into the tree
+  expanded); **reveal in file tree** (right-click a file preview to expand the
+  ancestors and highlight the row); **one-click `@file` from a preview**
+  (right-click a file preview to insert its reference straight away);
+  **keyboard navigation & a11y** (arrows/Home/End/`@`, roving tabindex,
+  `role=tree` semantics); 65 offline tests.
 - **v0.0.4** — fixed a Files tab restored after a restart showing "no workspace
   directory" until a manual reload (the Host route now resolves the root through
   session persistence for cold sessions; a failed level self-heals with up to two
