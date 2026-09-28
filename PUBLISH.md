@@ -44,8 +44,8 @@ cd <dsh-at-sider 仓库目录>
 git add -A && git commit -m "feat: 本次改动"
 
 # 2. 升版本（自动：改 version + 提交 + 打 annotated 标签）
-npm version patch   # 0.1.0 → 0.1.1
-npm version minor   # → 0.2.0
+npm version patch   # 0.0.1 → 0.0.2
+npm version minor   # → 0.1.0
 npm version major   # → 1.0.0
 
 # 3. 推代码 + 标签
