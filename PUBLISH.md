@@ -98,4 +98,4 @@ pnpm add dsh-at-sider
 dsh plugin --profile web add link:C:/path/to/dsh-at-sider
 ```
 
-详见 [`README.zh.md`](README.zh.md) 与 [`docs/INSTALL.md`](docs/INSTALL.md)。
+详见 [`README.md`](README.md)（简体中文）/ [`README_EN.md`](README_EN.md) 与 [`docs/INSTALL.md`](docs/INSTALL.md)。

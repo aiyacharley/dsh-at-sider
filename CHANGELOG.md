@@ -14,6 +14,10 @@
   `IconFolderOpenRegular`/`IconFolderCloseRegular`, and `GuideArtworkFiles` for
   the guide capsule — each read defensively, with the inline glyphs kept as the
   fallback when the module table does not seed them.
+- Docs: the README follows the sibling `dsh-pubmed` layout — `README.md` is the
+  Simplified-Chinese primary document, `README_EN.md` is its English mirror, both
+  carry the npm-version and dsh-plugin.org badges, and both spell out the install
+  steps (one command, agent-driven, manual, update, uninstall).
 
 ## 0.0.1
 

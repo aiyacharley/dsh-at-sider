@@ -43,7 +43,7 @@
     "locale/*.json",
     "docs",
     "README.md",
-    "README.zh.md",
+    "README_EN.md",
     "CHANGELOG.md",
     "PUBLISH.md",
     "LICENSE"
