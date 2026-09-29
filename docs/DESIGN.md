@@ -54,9 +54,10 @@ menu seat simply means no menu entries.
 Consequences accepted deliberately:
 
 - the native body's own store (levels cached across collapse, scroll offset
-  persisted per tab) is not reused; this plugin keeps expansion in component
-  state, remembers each tab's scroll offset in a module-local map, and rereads a
-  level when it is reopened;
+  persisted per tab) is not reused; this plugin keeps expansion and each tab's
+  scroll offset in module-level per-tab memories — so both survive the body
+  being unmounted (a file-preview round trip or the runtime fallback toggle) —
+  and rereads a level when it is reopened;
 - the guide capsule and the `workspace.files` shortcut are contributed by the
   native definition, which the takeover shadows — so this plugin must (and does)
   contribute a guide entry of its own, `order: 10`, `commandId: 'workspace.files'`.
@@ -186,9 +187,10 @@ fall back to its builtin registration, so the native body renders again;
 re-registering brings the enhancement back. This is exactly what unloading the
 plugin does, which is why the toggle needs no cooperation from the native half
 and no uninstall. The trade-off is stated plainly rather than hidden: the
-enhanced tree's component state (expansion, scroll offset) is discarded on the
-way out — it lives in component state, not a slot store (ROADMAP R30) — and the
-switch is runtime-only, so a restart starts enhanced.
+enhanced tree's expansion and scroll offset survive the switch (per-tab module
+memories), but the levels cache does not — a returning level is refetched — and
+nothing survives a page reload. The store migration the native body enjoys is
+ROADMAP R30.
 
 **Reveal in tree (R16).** Client-side navigation carries a parameter bundle:
 `ctx.sidebarRight.openTab(kind, { params })` records `params` on the tab as
@@ -263,7 +265,7 @@ result count is announced through a polite live region, and the result list is a
 | auto-refresh toggle | rendered but hidden | visible, `aria-pressed` | a control a user cannot see cannot be used; the state is the same |
 | root path label | shared `PathLabel` (left-edge fade) | own span, end ellipsis + full-path tooltip | avoids importing a Harness Client package |
 | row affordance | none | an `@文件`/`@file` chip after the name (visible on hover/focus) | a bare `@` glyph does not say what it does; the label is the plugin's own copy, localized |
-| level caching | cache survives collapse | reread on reopen | component-local state instead of a slot store; the visible result is the same |
+| level caching | cache survives collapse | reread on reopen; expansion and scroll are remembered per tab (module-level memories) | a slot store would be the native-faithful home for all of it (ROADMAP R30); the memories already give the native visible behaviour across preview round trips |
 | accessibility | plain rows in a list | `role="tree"` / `treeitem` / `group` with `aria-level`, roving tabindex | a tree that only responds to the mouse is not reachable by keyboard or screen reader |
 | whole-workspace search | none | header filter + its own Host route | finding a file should not require expanding the right levels by hand |
 | returning to the native tree | uninstall the plugin | right-click the Files tab (runtime toggle, §6) | comparing against the native tree should not cost an uninstall |
@@ -318,7 +320,7 @@ place:
 
 ## 11. Verification performed
 
-- `node --test test/host.test.mjs test/client.test.mjs` — **65 tests**: containment
+- `node --test test/host.test.mjs test/client.test.mjs` — **66 tests**: containment
   (including the sibling-prefix and `..` cases), per-entry `mtimeMs`, truncation,
   failure-code mapping, bounded concurrency; the listing route's request/response
   contract; `apply()` registering **two** authenticated POST routes and staying
@@ -331,7 +333,8 @@ place:
   button's labels; the host-artwork path and its fallback; the row's box model;
   size formatting, width tiers, sort comparators, the header sort cycle with its
   persistence, and the tier CSS; the quick filter (debounce, result list, chip,
-  clearing) and reveal expansion; tree semantics (`role` / `aria-level` /
+  clearing) and reveal expansion; the expansion memory across an unmount/
+  remount; tree semantics (`role` / `aria-level` /
   `aria-expanded`) and the keyboard-navigation branches; and a rendered-tree
   smoke test through a minimal React shim (rows, dates, `@` buttons, a directory
   click, a failure line, the no-workspace state, and both click paths).

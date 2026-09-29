@@ -1126,13 +1126,22 @@ window.__ModuleLoader__.load({
     /** Where each tab's scroll offset is remembered while the body is unmounted. */
     const scrollMemory = new Map()
 
+    /**
+     * Where each tab's tree expansion is remembered while the body is unmounted.
+     * The native tree keeps expansion in its own store, so coming back from a
+     * file preview restores it; without a store, the same module-level memory
+     * the scroll offset uses is the closest match (full migration: ROADMAP R30).
+     */
+    const expansionMemory = new Map()
+
     /** The file tree's body: the session's workspace root and whatever is expanded under it. */
     function FilesBody({ useTabInfo, sessionId, useSessions, t }) {
       const { tab } = useTabInfo()
       const cwd = useSessions((sessions) => sessions.byId[sessionId]?.cwd)
+      const memoryKey = `${tab.id}::${cwd ?? ''}`
       const [autoRefresh, setAutoRefresh] = React.useState(true)
       const [revision, setRevision] = React.useState(0)
-      const [expanded, setExpanded] = React.useState([])
+      const [expanded, setExpanded] = React.useState(() => expansionMemory.get(memoryKey) ?? [])
       const [sort, setSort] = React.useState(loadSortPref)
       const [widthTierValue, setWidthTierValue] = React.useState(3)
       const [query, setQuery] = React.useState('')
@@ -1142,7 +1151,16 @@ window.__ModuleLoader__.load({
       const scrollRef = React.useRef(0)
       const searchTimer = React.useRef(0)
       const searchSeq = React.useRef(0)
-      const memoryKey = `${tab.id}::${cwd ?? ''}`
+      const expandedRef = React.useRef(expanded)
+      expandedRef.current = expanded
+      // Write-through on every change, plus once more on unmount (the ref makes
+      // the cleanup see the latest value even if the last effect never flushed).
+      // Without a workspace there is nothing meaningful to remember.
+      React.useEffect(() => {
+        if (cwd === undefined) return
+        expansionMemory.set(memoryKey, expanded)
+        return () => expansionMemory.set(memoryKey, expandedRef.current)
+      }, [memoryKey, cwd, expanded])
       React.useEffect(() => tab.actions.bindCommands({
         refresh: () => setRevision((value) => value + 1),
       }), [tab.actions])
@@ -1625,6 +1643,7 @@ window.__ModuleLoader__.load({
         attrSelector,
         chainOf,
         controls,
+        expansionMemory,
         matchOf,
         performReference,
         revealPathFromAddress,

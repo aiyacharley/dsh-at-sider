@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+- Fix: **the tree's expansion now survives the preview round trip, like the
+  native tree.** Opening a file preview unmounts the enhanced body, and coming
+  back to the Files tab used to remount it collapsed. Expansion is now
+  remembered per tab in the same module-level memory the scroll offset uses
+  (written through on every change, restored on mount), so preview round trips
+  — and the runtime native-fallback toggle — leave the tree as it was. Still
+  not remembered: the level data itself (a returning level is refetched) and
+  anything across a page reload; the full slot-store migration remains
+  ROADMAP R30.
+- Tests: 66 — the test shim now gives every component instance its own hook
+  state, addressed by the instance's tree position (the shim's stand-in for
+  fibers). That is what makes the expand → unmount → remount flow testable at
+  all: the previous flat hook list could not survive tree-shape changes, which
+  real trees make constantly.
+
 ## 0.1.0
 
 - Feature: **runtime toggle between the enhanced tree and the native one (R10)**

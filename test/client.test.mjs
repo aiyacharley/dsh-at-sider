@@ -14,26 +14,58 @@ const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
 /** A Windows-style root, so the case-insensitive containment path is exercised. */
 const ROOT = 'C:/work/ws'
 
-/** A minimal React: elements, the hooks the tree uses, one render pass at a time. */
+/**
+ * A minimal React: elements, the hooks the tree uses, one render pass at a time.
+ * Hook state lives per component instance, addressed by the instance's position
+ * path in the tree (the shim's stand-in for fibers): re-renders keep their state,
+ * and a child mounting for the first time starts with fresh hook state — the
+ * flat one-list-per-harness version could not survive tree-shape changes, which
+ * real trees do all the time (expanding a directory mounts a nested Level).
+ */
 function createReact() {
-  const slots = []
-  let cursor = 0
+  const Fragment = Symbol.for('react.fragment')
+  /** position path -> { path, slots, cursor, counter } */
+  const instances = new Map()
+  let current = null
+  let detached = 0
   const effects = []
   const sameDeps = (left, right) => Array.isArray(left) && Array.isArray(right)
     && left.length === right.length && left.every((value, index) => Object.is(value, right[index]))
-  const Fragment = Symbol.for('react.fragment')
+  const enter = (path) => {
+    let instance = instances.get(path)
+    if (instance === undefined) {
+      instance = { path, slots: [], cursor: 0, counter: 0 }
+      instances.set(path, instance)
+    }
+    instance.cursor = 0
+    instance.counter = 0
+    return instance
+  }
   const React = {
     Fragment,
     createElement(type, props, ...children) {
       if (type === Fragment) return children.flat()
-      if (typeof type === 'function') return type(props ?? {})
+      if (typeof type === 'function') {
+        // Called outside a render (test helpers building nodes by hand) the
+        // element gets a throwaway scope instead of a tree position.
+        const path = current === null ? `detached:${detached++}` : `${current.path}:${current.counter++}`
+        const instance = enter(path)
+        const previous = current
+        current = instance
+        try {
+          return type(props ?? {})
+        } finally {
+          current = previous
+        }
+      }
       // React flattens nested child arrays; the shim must too, or tests that
       // pass an array as a single child would see an extra nesting level.
       return { type, props: props ?? {}, children: children.flat(Infinity) }
     },
     useState(initial) {
-      const index = cursor
-      cursor += 1
+      const slots = current.slots
+      const index = current.cursor
+      current.cursor += 1
       if (slots[index] === undefined) slots[index] = { value: typeof initial === 'function' ? initial() : initial }
       const slot = slots[index]
       return [slot.value, (next) => {
@@ -41,8 +73,9 @@ function createReact() {
       }]
     },
     useEffect(fn, deps) {
-      const index = cursor
-      cursor += 1
+      const slots = current.slots
+      const index = current.cursor
+      current.cursor += 1
       const previous = slots[index]
       slots[index] = { deps }
       if (previous !== undefined && sameDeps(previous.deps, deps)) return
@@ -52,19 +85,30 @@ function createReact() {
       React.useEffect(fn, deps)
     },
     useRef(initial) {
-      const index = cursor
-      cursor += 1
+      const slots = current.slots
+      const index = current.cursor
+      current.cursor += 1
       if (slots[index] === undefined) slots[index] = { value: { current: initial } }
       return slots[index].value
     },
   }
-  /** Render `component(props)` once; returns the tree and any cleanup the pass queued. */
-  const render = (component, props) => {
-    cursor = 0
+  /**
+   * Render `component(props)` once; returns the tree and any cleanup the pass
+   * queued. `{ remount: true }` drops every instance's hook state first — this
+   * is how a test simulates the body being unmounted and mounted again.
+   */
+  const render = (component, props, options) => {
+    if (options?.remount === true) instances.clear()
     effects.length = 0
-    const tree = component(props)
-    const queued = effects.slice()
-    return { tree, runEffects: () => { for (const effect of queued) effect() } }
+    const previous = current
+    current = enter('0')
+    try {
+      const tree = component(props)
+      const queued = effects.slice()
+      return { tree, runEffects: () => { for (const effect of queued) effect() } }
+    } finally {
+      current = previous
+    }
   }
   return { React, render }
 }
@@ -805,6 +849,46 @@ describe('rendering the tree', () => {
     // Timers were scheduled for the scroll polling but none fired in the shim.
     assert.ok(timers.length >= 0)
     void timers
+  })
+
+  it('remembers the expansion across a body unmount, like the native tree', async () => {
+    const { plugin, react, props } = await renderBody()
+    const renderPass = (options) => react.render(plugin.__internals.components.FilesBody, props, options)
+    let pass = renderPass()
+    pass.runEffects()
+    await new Promise((done) => setTimeout(done, 0))
+    pass = renderPass()
+
+    // Expand src by clicking its row.
+    const srcRow = () => collect(pass.tree, (node) => node.props?.role === 'treeitem'
+      && node.props?.['data-at-sider-treeitem'] === `${ROOT}/src`)[0]
+    srcRow().props.onClick()
+    pass = renderPass()
+    pass.runEffects()
+    await new Promise((done) => setTimeout(done, 0))
+    pass = renderPass()
+    assert.equal(srcRow().props['aria-expanded'], true)
+    assert.ok(
+      Array.from(plugin.__internals.expansionMemory.values()).some((list) => list.includes(`${ROOT}/src`)),
+      'the expansion is written through to the module-level memory',
+    )
+
+    // Opening a file preview unmounts this body; coming back remounts it with
+    // fresh hook state — a real remount paints the loading row again (stale
+    // hooks would render the ready tree straight away), and once the levels are
+    // read the expansion must be back without interaction.
+    pass = renderPass({ remount: true })
+    assert.equal(collect(pass.tree, (node) => node.props?.['data-at-sider-row'] === 'loading').length, 1,
+      'the remount really reset the body')
+    pass.runEffects()
+    await new Promise((done) => setTimeout(done, 0))
+    pass = renderPass()
+    pass.runEffects()
+    await new Promise((done) => setTimeout(done, 0))
+    pass = renderPass()
+    assert.equal(srcRow().props['aria-expanded'], true, 'the expansion survives the round trip')
+    assert.ok(collect(pass.tree, (node) => node.props?.role === 'group').length >= 1,
+      'the remembered level is mounted again')
   })
 
   it('filters the whole workspace through the quick filter (R15)', async () => {

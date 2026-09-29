@@ -104,8 +104,10 @@ save in the workspace refreshes the open levels, with no polling.
   `copied` / `failed` for 1.4 s before returning to its noun label.
 - Times use a fixed `YYYY-MM-DD HH:mm` shape (no locale drift); the tooltip carries
   the full local time.
-- Directories expand level by level; reopening a level rereads it, and expansion
-  plus scroll offset survive a switch to another sidebar tab.
+- Directories expand level by level; reopening a level rereads it, and
+  **expansion plus scroll offset are remembered per tab** — a file-preview round
+  trip, or a runtime toggle to the native tree and back, leaves the tree as it
+  was (a page reload starts over).
 
 ---
 
@@ -188,9 +190,11 @@ alternative that was evaluated and rejected.
   loaded the native tree does not render; uninstalling restores it exactly, and
   right-clicking the Files tab offers 「use the native file tree」 to switch back
   at runtime (no native code is modified either way).
-- Switching back resets the enhanced tree's expansion state (it lives in
-  component state rather than a slot store — ROADMAP R30), and the toggle is a
-  runtime switch: a restart starts enhanced again.
+- Expansion and scroll offset are remembered per tab in a module-level memory,
+  so preview round trips and the runtime toggle keep the tree as it was; what
+  is not kept is the **level data** (a returning level is refetched) and
+  anything across a **page reload** — the full slot-store migration is
+  ROADMAP R30.
 - Modification times and the search both come from `node:fs` (the `ctx.fs` seam
   exposes no time field), so both routes carry their own workspace containment.
 - The Client half mirrors a few private details of the native tree (row ordering,
