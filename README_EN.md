@@ -244,7 +244,7 @@ dsh plugin --profile web add dsh-at-sider@latest
 ### Update
 
 ```bash
-dsh plugin --profile web update dsh-at-sider@latest     # or @0.1.0 to pin
+dsh plugin --profile web update dsh-at-sider@latest     # or @0.1.1 to pin
 ```
 
 Restart DSH for the change to take effect.
@@ -273,7 +273,7 @@ Restart DSH for the change to take effect.
 ## Development and tests
 
 ```bash
-npm test          # node --test, 65 cases, fully offline (no network, no browser)
+npm test          # node --test, 66 cases, fully offline (no network, no browser)
 ```
 
 - This plugin has **no dependencies and no build step**: `client.js` is the final
@@ -295,6 +295,13 @@ npm test          # node --test, 65 cases, fully offline (no network, no browser
 
 ## Version history
 
+- **v0.1.1** — fix: **the tree's expansion survives the preview round trip now**,
+  like the native tree (remembered per tab in a module-level memory; the runtime
+  toggle to the native tree and back keeps it too. Level data is still refetched
+  on return and a page reload starts over — full migration is ROADMAP R30); the
+  INSTALL troubleshooting table and the update sections document the client
+  artifact's `rev` cache layer and the hard-refresh → reinstall ladder; the test
+  shim scopes hook state per component instance; 66 offline tests.
 - **v0.1.0** — first feature release: **runtime native fallback** (right-click the
   Files tab to switch between the enhanced and native trees — no uninstall
   needed); **quick filter / locate** (a header box searching the whole workspace

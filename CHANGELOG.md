@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.1
 
 - Fix: **the tree's expansion now survives the preview round trip, like the
   native tree.** Opening a file preview unmounts the enhanced body, and coming
@@ -11,6 +11,10 @@
   not remembered: the level data itself (a returning level is refetched) and
   anything across a page reload; the full slot-store migration remains
   ROADMAP R30.
+- Docs: the INSTALL troubleshooting table and both READMEs' update sections
+  document the artifact `rev` cache layer — why a restart can look like a no-op
+  (an old-rev request is rejected rather than served fresh bytes) and the
+  hard-refresh → reinstall ladder.
 - Tests: 66 — the test shim now gives every component instance its own hook
   state, addressed by the instance's tree position (the shim's stand-in for
   fibers). That is what makes the expand → unmount → remount flow testable at
