@@ -249,6 +249,15 @@ dsh plugin --profile web update dsh-at-sider@latest     # or @0.1.0 to pin
 
 Restart DSH for the change to take effect.
 
+> Changed `client.js` during development and a restart "did nothing"? A client
+> bundle is addressed by a `rev` derived from the file's metadata
+> (mtime/ctime/size), and an **old-rev request is rejected rather than served
+> fresh bytes**. Hard-refresh the browser first (Ctrl+Shift+R); if it is still
+> stale, remove and re-add the plugin — a reinstall rescans the artifact and
+> publishes a new revision, even without a restart. A `link:` install points at
+> the working tree itself and has not gone stale; this is the revision-stamp
+> layer. See the troubleshooting table in [docs/INSTALL.md](docs/INSTALL.md).
+
 ### Uninstall
 
 - `dsh plugin --profile web remove dsh-at-sider`, then restart.

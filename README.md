@@ -187,6 +187,11 @@ dsh plugin --profile web update dsh-at-sider@latest     # 或 @0.1.0 指定版�
 
 更新后**重启 DSH** 生效。
 
+> 开发中改了 `client.js` 却"重启也没生效"？Client 产物按文件元数据（mtime/ctime/size）派生的
+> `rev` 寻址，**旧 rev 的请求会被拒绝而不是返回新字节**。先浏览器硬刷新（Ctrl+Shift+R）；
+> 仍不行就卸载重装（重装会触发实时重扫并发布新 rev，无需重启）——`link:` 安装指向工作树本身，
+> 没有失效，是版本戳层级的问题。详见 [docs/INSTALL.md](docs/INSTALL.md) 排错表。
+
 ### 卸载
 
 - 一条命令：`dsh plugin --profile web remove dsh-at-sider` → 重启；

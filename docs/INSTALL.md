@@ -80,6 +80,7 @@ This proves the patch layer parses and applies. It does not load the plugin.
 
 | Symptom | Cause | Fix |
 |---|---|---|
+| Restarted but the tree still looks old | the browser or the plugin table is still addressing the previous artifact revision — a client bundle's URL carries a `rev` derived from the file's metadata (mtime/ctime/size), and an old-rev request is **rejected** rather than served fresh bytes | hard-refresh the browser (Ctrl+Shift+R); if still stale, remove and re-add the plugin — a reinstall rescans the artifact and publishes a new revision, even without a restart |
 | Files tab unchanged | plugin row not loaded, or not restarted | check `dsh.profile.bundles`, restart `dsh web` |
 | Tree renders but the date column is empty | the Host routes are unavailable (Host half not loaded) | confirm the restart; check that `dsh-at-sider` appears in the composed profile |
 | The search box finds nothing | same cause as above, or the query is blank | confirm the restart; the search route needs the Host half |
