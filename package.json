@@ -1,7 +1,7 @@
 {
   "name": "dsh-at-sider",
-  "version": "0.1.1",
-  "description": "DeepSeek Harness plugin: adds an @ file reference button (@文件 / @file, @文件夹 / @folder), a modification-time column and a size column, sortable rows, width-adaptive columns, a whole-workspace quick filter, reveal-in-tree and one-click @ references from file previews, a runtime toggle back to the native tree, and full keyboard navigation, to the native right-sidebar file tree, by taking over the builtin `files` tab kind as an extension. The Host half serves each directory's entries with mtimeMs over its own authenticated /api routes (the Harness's workspaceFiles listing carries no time); the Client half renders the tree with labelled @ chips that insert references into the composer (Alt-click copies the mention) and a pinned date column with a full local-time tooltip.",
+  "version": "0.2.0",
+  "description": "DeepSeek Harness plugin: gives the native right-sidebar file tree six things — an @ file reference button (@文件 / @file, @文件夹 / @folder) on every row, a modification-time and a size column, sortable rows, a whole-workspace quick search & locate (with reveal-in-tree and one-click @ from file previews), a bottom git bar (branch, ahead/behind, expandable recent commits, multi-repo switcher, per-file state dots), and full keyboard navigation with tree semantics — by taking over the builtin `files` tab kind as an extension, with a runtime toggle back to the native tree. The Host half serves directory listings with mtimeMs and the git state over its own authenticated /api routes (the Harness's workspaceFiles listing carries no time); the Client half renders the tree with labelled @ chips that insert references into the composer (Alt-click copies the mention) and a pinned date column with a full local-time tooltip.",
   "keywords": [
     "dsh",
     "dsh-plugin",

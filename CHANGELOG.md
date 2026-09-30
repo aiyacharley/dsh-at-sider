@@ -1,13 +1,7 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
-- Fix: **a selected repository that turns out to be invalid no longer makes the
-  git bar vanish silently.** Discovery validates each candidate with a bounded
-  `git rev-parse`; an unusable repository (for example a `.git` directory
-  missing its HEAD, as seen on a real workspace) is listed in the selector as a
-  disabled option and the bar explains 「不是有效的 Git 仓库」 instead of
-  disappearing.
 - Feature: **git state on rows and the bottom bar (R40a)** — files that are
   untracked, modified (unstaged), or staged get a coloured dot right after the
   name (with a naming tooltip), and a **bottom bar** pinned under the tree shows
@@ -24,6 +18,16 @@
   `git log -1`, and `git log -n 20`) per repository, cached 30 s with
   in-flight deduplication, a 3 s timeout and a 1 MB output cap; a workspace that
   is a subdirectory of its repository maps status paths through `--show-prefix`.
+- Fix: **a selected repository that turns out to be invalid no longer makes the
+  git bar vanish silently.** Discovery validates each candidate with a bounded
+  `git rev-parse`; an unusable repository (for example a `.git` directory
+  missing its HEAD, as seen on a real workspace) is listed in the selector as a
+  disabled option and the bar explains 「不是有效的 Git 仓库」 instead of
+  disappearing.
+- Docs: the README leads with the six headline capabilities and the INSTALL
+  troubleshooting table / update sections document the artifact `rev` cache
+  layer (why a restart can look like a no-op and the hard-refresh → reinstall
+  ladder).
 - Investigation recorded (ROADMAP §2.4): the in-box `dsh-workspace-changes`
   plugin is a per-turn snapshot diff and cannot serve the current work-tree
   state; its `GitRunner` shape was adopted as the reference. Per-file last-commit

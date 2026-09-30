@@ -5,16 +5,25 @@
 [![npm version](https://img.shields.io/npm/v/dsh-at-sider)](https://www.npmjs.com/package/dsh-at-sider)
 [![Listed on dsh-plugin.org](https://dsh-plugin.org/badges/listed.svg)](https://dsh-plugin.org/plugins/aiyacharley/dsh-at-sider)
 
-> **An `@` reference button, a modification-time and size column, sorting, a quick
-> filter and locate for the native sidebar file tree.** Same tab, same entry point,
-> same icons, same way of opening files — the right sidebar's **Files** tab stays
-> the native one (same `Mod+P`, same guide capsule, same artwork). Each row simply
-> gains a **`@file` chip** right after the name plus its **size and modification
-> time** pinned to the far right (width-adaptive, sortable); the header gains a
-> **whole-workspace search box**; right-clicking a file preview offers one-click
-> **`@file`** and **reveal in tree**; and right-clicking the Files tab **switches
-> back to the native tree** whenever you want to compare — all of it keyboard
-> operable.
+> **Six things the native sidebar file tree was missing: `@ references` · `file
+> size` · `modification time` · `sorting` · `quick search & locate` · `git commit
+> info at the bottom of the sidebar`.** Same tab, same entry point, same icons,
+> same way of opening files — the right sidebar's **Files** tab stays the native
+> one (same `Mod+P`, same guide capsule, same artwork):
+>
+> - Each row: a **`@file` chip** right after the name + **size / modification
+>   time** pinned to the far right (width-adaptive, never clipped);
+> - Header: **whole-workspace quick search** (recursive, results can be `@`-ed or
+>   jumped to) + **sorting** (name / time / size / type, remembered);
+> - **Bottom git bar**: branch, ahead/behind, and the latest commit summary —
+>   **click to expand the last 20 commits upward**; multi-repo workspaces get a
+>   **repository switcher**, and files are coloured by state (untracked /
+>   unstaged / staged);
+> - **Right-click a file preview**: one-click **`@file`** and **reveal in tree**
+>   (ancestors expanded, the row highlighted);
+> - Right-click the Files tab to **switch back to the native tree** whenever you
+>   want to compare (no uninstall, switch back any time) — all of it keyboard
+>   operable.
 
 ---
 
@@ -250,7 +259,7 @@ dsh plugin --profile web add dsh-at-sider@latest
 ### Update
 
 ```bash
-dsh plugin --profile web update dsh-at-sider@latest     # or @0.1.1 to pin
+dsh plugin --profile web update dsh-at-sider@latest     # or @0.2.0 to pin
 ```
 
 Restart DSH for the change to take effect.
@@ -279,7 +288,7 @@ Restart DSH for the change to take effect.
 ## Development and tests
 
 ```bash
-npm test          # node --test, 78 cases, fully offline (no network, no browser; git cases use a real git)
+npm test          # node --test, 83 cases, fully offline (no network, no browser; git cases use a real git)
 ```
 
 - This plugin has **no dependencies and no build step**: `client.js` is the final
@@ -301,6 +310,15 @@ npm test          # node --test, 78 cases, fully offline (no network, no browser
 
 ## Version history
 
+- **v0.2.0** — **the bottom git bar** (file rows coloured by untracked / unstaged
+  / staged; a pinned bottom bar with the branch and the latest commit summary,
+  expanding upward into the last 20 commits; full hash, author, and time on
+  hover); **multi-repository workspaces** (when the workspace itself is not a
+  repository but its first/second-level subdirectories are, the bar gains a
+  repository selector — the picked repository re-anchors the state, and a
+  broken `.git` shows as a disabled option with an explanation instead of
+  vanishing); git state is read with bounded subprocesses and cached. Verified
+  on a real multi-repo workspace; 83 offline tests.
 - **v0.1.1** — fix: **the tree's expansion survives the preview round trip now**,
   like the native tree (remembered per tab in a module-level memory; the runtime
   toggle to the native tree and back keeps it too. Level data is still refetched

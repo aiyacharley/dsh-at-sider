@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "Files+ (@ reference, modified time, quick locate)",
-    "description": "The native sidebar file tree, enhanced: an @ reference button on every row plus pinned modification-time and size columns, sortable and width-adaptive columns, a whole-workspace quick filter, reveal-in-tree and one-click @ from file previews, a runtime toggle back to the native tree, and full keyboard navigation with tree semantics."
+    "title": "Files+ (@ refs, size & mtime, sorting, search, git)",
+    "description": "The native sidebar file tree, enhanced: an @ reference button on every row plus pinned size and modification-time columns, sortable and width-adaptive; whole-workspace quick search and locate; a git bar at the bottom (branch, recent commits, expandable, multi-repo switcher); one-click @ and reveal from file previews; a runtime toggle back to the native tree; full keyboard navigation with tree semantics."
   }
 }
