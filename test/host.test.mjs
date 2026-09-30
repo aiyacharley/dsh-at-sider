@@ -515,6 +515,10 @@ describe('git state (R40a)', () => {
       assert.equal(payload.value.git.available, true)
       assert.equal(payload.value.git.branch, 'main')
       assert.ok(payload.value.git.head.subject.startsWith('initial:'))
+      assert.ok(Array.isArray(payload.value.git.commits) && payload.value.git.commits.length >= 1,
+        'the git block carries the recent-commit list for the bottom bar')
+      assert.equal(payload.value.git.commits[0].hash, payload.value.git.head.hash,
+        'the newest commit leads the list')
       const byName = new Map(payload.value.entries.map((entry) => [entry.name, entry]))
       assert.equal(byName.get('dirty.txt').git, 'unstaged')
       assert.equal(byName.get('untracked.txt').git, 'untracked')

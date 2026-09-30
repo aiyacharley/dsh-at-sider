@@ -236,12 +236,15 @@ directory.
 ## 8. Git state on rows and the header
 
 The tree can say which files differ from the repository: untracked, modified
-(unstaged), and staged files each get a coloured dot right after the name, and
-the header gains a git line — `⎇ branch ↑ahead ↓behind · short-hash subject
-(relative age)` — whose tooltip carries the full hash, the author, and the
+(unstaged), and staged files each get a coloured dot right after the name, and a
+**bottom bar** — pinned under the scrolling tree — shows `⎇ branch ↑ahead
+↓behind · short-hash subject (relative age)`. Clicking the bar expands a commit
+list **upward** (a panel over the lower part of the tree) with the recent
+commits, oldest at the top and the newest at the bottom — next to the bar, with
+a HEAD marker. The bar's tooltip carries the full hash, the author, and the
 absolute time. Everything degrades to nothing: outside a repository, or without
-a git executable, the response says `available: false` and neither the dots nor
-the line render.
+a git executable, the response says `available: false` and neither the dots, the
+bar, nor the panel render.
 
 The in-box `dsh-workspace-changes` plugin was evaluated first and rejected for
 this job: it records **per-turn snapshot diffs** ("what did this turn change",
@@ -257,10 +260,12 @@ Mechanics:
   file's state plus the branch and ahead/behind counts; `git rev-parse
   --show-toplevel --show-prefix` locates the repository and, when the workspace
   root is a subdirectory of it, provides the prefix that maps repository-relative
-  status paths onto the workspace's entries; `git log -1` provides the HEAD.
-- the three commands run with a 3 s timeout and a 1 MB stdout cap, are cached
-  per root for 30 s with in-flight deduplication, and ride the **existing**
-  listing route's response — no new route, no new auth surface;
+  status paths onto the workspace's entries; `git log -1` provides the HEAD and
+  `git log -n 20` the commit list for the panel (newest first on the wire;
+  rendered bottom-anchored).
+- the commands run with a 3 s timeout and a 1 MB stdout cap, are cached per root
+  for 30 s with in-flight deduplication, and ride the **existing** listing
+  route's response — no new route, no new auth surface;
 - only `file` entries are annotated (directories never carry a dot); a clean
   file carries no field at all, so the payload stays small;
 - a parse or run failure never fails the listing: the response degrades to

@@ -109,7 +109,16 @@ window.__ModuleLoader__.load({
 .ats-gitUntracked{background:var(--dsw-alias-success,#3fb950)}
 .ats-gitUnstaged{background:var(--dsw-alias-warning,#d29922)}
 .ats-gitStaged{background:var(--dsw-alias-accent,#4c8dff)}
-.ats-gitline{box-sizing:border-box;border-bottom:.5px solid var(--dsw-alias-border-l3);flex:none;align-items:center;gap:8px;padding:3px 16px 4px;display:flex;white-space:nowrap;overflow:hidden;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.4}
+.ats-gitline{box-sizing:border-box;border-top:.5px solid var(--dsw-alias-border-l3);flex:none;align-items:center;gap:8px;width:100%;padding:4px 12px;display:flex;white-space:nowrap;overflow:hidden;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.4;cursor:pointer;background:0 0;border-left:none;border-right:none;border-bottom:none;font-family:inherit;text-align:left}
+.ats-gitline:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.ats-gitPanelWrap{flex:none;display:flex;flex-direction:column;justify-content:flex-end;min-height:0}
+.ats-gitPanel{box-sizing:border-box;max-height:200px;overflow-y:auto;border-top:.5px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-bg-base);padding:2px 0}
+.ats-gitRow{display:flex;align-items:baseline;gap:8px;padding:2px 12px;white-space:nowrap;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.5}
+.ats-gitHash{color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums;flex:none}
+.ats-gitSubject{overflow:hidden;text-overflow:ellipsis;min-width:0;color:var(--dsw-alias-label-primary)}
+.ats-gitMeta{flex:none;color:var(--dsw-alias-label-tertiary)}
+.ats-gitHeadMark{flex:none;color:var(--dsw-alias-success,#3fb950);font-size:9px}
+.ats-gitChevron{flex:none;margin-left:auto;color:var(--dsw-alias-label-tertiary)}
 .ats-gitBranch{color:var(--dsw-alias-label-primary);flex:none}
 .ats-gitSync{flex:none;font-variant-numeric:tabular-nums}
 .ats-gitCommit{overflow:hidden;text-overflow:ellipsis;min-width:0}
@@ -156,6 +165,14 @@ window.__ModuleLoader__.load({
       gitSync: 'ats-gitSync',
       gitCommit: 'ats-gitCommit',
       gitTime: 'ats-gitTime',
+      gitPanelWrap: 'ats-gitPanelWrap',
+      gitPanel: 'ats-gitPanel',
+      gitRow: 'ats-gitRow',
+      gitHash: 'ats-gitHash',
+      gitSubject: 'ats-gitSubject',
+      gitMeta: 'ats-gitMeta',
+      gitHeadMark: 'ats-gitHeadMark',
+      gitChevron: 'ats-gitChevron',
     }
 
     /** Install the stylesheet once per document; unload leaves it for the next load to reuse. */
@@ -495,6 +512,17 @@ window.__ModuleLoader__.load({
                   author: typeof rawGit.head.author === 'string' ? rawGit.head.author : '',
                   time: typeof rawGit.head.time === 'number' ? rawGit.head.time : undefined,
                 }
+                : undefined,
+              commits: Array.isArray(rawGit.commits)
+                ? rawGit.commits.slice(0, 50).flatMap((commit) => {
+                  if (commit === null || typeof commit !== 'object' || typeof commit.hash !== 'string' || typeof commit.subject !== 'string') return []
+                  return [{
+                    hash: commit.hash,
+                    subject: commit.subject,
+                    author: typeof commit.author === 'string' ? commit.author : '',
+                    time: typeof commit.time === 'number' ? commit.time : undefined,
+                  }]
+                })
                 : undefined,
             }
             : { available: false }
@@ -1331,6 +1359,10 @@ window.__ModuleLoader__.load({
         setSort(next)
         saveSortPref(next)
       }
+      // R40a: the bottom git bar — click expands the recent-commit list upward
+      // (the newest commit sits at the bottom, next to the bar).
+      const [gitOpen, setGitOpen] = React.useState(false)
+      const toggleGit = () => setGitOpen((value) => !value)
       if (cwd === undefined) {
         return h('div', { className: css.status, 'data-at-sider-state': 'no-workspace' },
           h('p', { className: css.statusLine }, t('noWorkspace')))
@@ -1366,30 +1398,6 @@ window.__ModuleLoader__.load({
         t,
       }
       const searching = trimmedQuery !== ''
-      // R40a: the header's git line — branch, ahead/behind, and the HEAD
-      // commit's short hash, subject, and relative age. Only rendered when the
-      // workspace answered with a repository.
-      const gitLine = gitInfo?.available === true
-        ? h('div', {
-            className: css.gitline,
-            'data-at-sider-git': 'head',
-            title: gitInfo.head === undefined
-              ? t('git.branch', { n: gitInfo.branch ?? '' })
-              : t('git.commit.title', {
-                  hash: gitInfo.head.hash,
-                  subject: gitInfo.head.subject,
-                  author: gitInfo.head.author,
-                  time: gitInfo.head.time !== undefined ? formatMtime(gitInfo.head.time) : '',
-                }),
-          },
-          h('span', { className: css.gitBranch }, `⎇ ${gitInfo.branch ?? ''}`),
-          (gitInfo.ahead > 0 || gitInfo.behind > 0) && h('span', { className: css.gitSync },
-            `${gitInfo.ahead > 0 ? `↑${String(gitInfo.ahead)}` : ''}${gitInfo.behind > 0 ? ` ↓${String(gitInfo.behind)}` : ''}`),
-          gitInfo.head !== undefined && h('span', { className: css.gitCommit },
-            `${gitInfo.head.hash} ${gitInfo.head.subject}`),
-          gitInfo.head?.time !== undefined && h('span', { className: css.gitTime }, relativeAgeText(gitInfo.head.time, t)),
-        )
-        : undefined
       return h('div', {
         className: css.root,
         'data-at-sider-state': 'tree',
@@ -1437,7 +1445,6 @@ window.__ModuleLoader__.load({
           'data-at-sider-reload': true,
           onClick: () => setRevision((value) => value + 1),
         }, h(RefreshIcon))),
-      gitLine,
       h('span', { className: css.srOnly, 'aria-live': 'polite' },
         searching && search.phase === 'ready' ? t('search.count', { n: String(search.results.length) }) : ''),
       h('div', {
@@ -1459,7 +1466,43 @@ window.__ModuleLoader__.load({
           onPickDirectory,
           t,
         })
-        : h('ul', { className: css.level, role: 'tree', 'aria-label': t('tree.aria') }, h(Level, { ...tree, parent: cwd }))))
+        : h('ul', { className: css.level, role: 'tree', 'aria-label': t('tree.aria') }, h(Level, { ...tree, parent: cwd }))),
+      gitInfo?.available === true && h('div', { className: css.gitPanelWrap },
+        gitOpen && h('div', { className: css.gitPanel, 'data-at-sider-git-panel': true, role: 'list', 'aria-label': t('git.aria') },
+          (gitInfo.commits ?? []).length === 0
+            ? h('div', { className: css.note, role: 'listitem' }, t('git.noCommits'))
+            : (gitInfo.commits ?? []).slice().reverse().map((commit, index, list) => {
+              const age = relativeAgeText(commit.time, t)
+              return h('div', { key: `${commit.hash}:${commit.time ?? ''}:${index}`, className: css.gitRow, role: 'listitem' },
+                h('span', { className: css.gitHash }, commit.hash),
+                h('span', { className: css.gitSubject, title: commit.subject }, commit.subject),
+                h('span', { className: css.gitMeta }, `${commit.author}${commit.author !== '' && age !== '' ? ' · ' : ''}${age}`),
+                index === list.length - 1 && h('span', { className: css.gitHeadMark, title: t('git.head') }, '●'))
+            })),
+        h('button', {
+          type: 'button',
+          className: css.gitline,
+          'data-at-sider-git': 'head',
+          'aria-expanded': gitOpen,
+          'aria-label': t('git.aria'),
+          title: gitInfo.head === undefined
+            ? t('git.branch', { n: gitInfo.branch ?? '' })
+            : t('git.commit.title', {
+              hash: gitInfo.head.hash,
+              subject: gitInfo.head.subject,
+              author: gitInfo.head.author,
+              time: gitInfo.head.time !== undefined ? formatMtime(gitInfo.head.time) : '',
+            }),
+          onClick: toggleGit,
+        },
+        h('span', { className: css.gitBranch }, `⎇ ${gitInfo.branch ?? ''}`),
+        (gitInfo.ahead > 0 || gitInfo.behind > 0) && h('span', { className: css.gitSync },
+          `${gitInfo.ahead > 0 ? `↑${String(gitInfo.ahead)}` : ''}${gitInfo.behind > 0 ? ` ↓${String(gitInfo.behind)}` : ''}`),
+        gitInfo.head !== undefined && h('span', { className: css.gitCommit },
+          `${gitInfo.head.hash} ${gitInfo.head.subject}`),
+        gitInfo.head?.time !== undefined && h('span', { className: css.gitTime }, relativeAgeText(gitInfo.head.time, t)),
+        h('span', { className: css.gitChevron, 'aria-hidden': 'true' }, gitOpen ? '▾' : '▸')),
+      ))
     }
 
     /** The quick-filter's result list (R15): flat matches over the whole workspace. */
@@ -1567,6 +1610,9 @@ window.__ModuleLoader__.load({
       'git.untracked': '未跟踪（Git 未纳管）',
       'git.branch': '分支 {n}',
       'git.commit.title': '最近提交 {hash}：{subject}（{author}，{time}）',
+      'git.aria': 'Git 状态与最近提交',
+      'git.head': '当前提交（最新）',
+      'git.noCommits': '没有提交记录',
       'time.now': '刚刚',
       'time.minutes': '{n} 分钟前',
       'time.hours': '{n} 小时前',
@@ -1622,6 +1668,9 @@ window.__ModuleLoader__.load({
       'git.untracked': 'Untracked',
       'git.branch': 'Branch {n}',
       'git.commit.title': 'Last commit {hash}: {subject} ({author}, {time})',
+      'git.aria': 'Git status and recent commits',
+      'git.head': 'Current commit (newest)',
+      'git.noCommits': 'No commits yet',
       'time.now': 'just now',
       'time.minutes': '{n} min ago',
       'time.hours': '{n} h ago',

@@ -287,6 +287,7 @@ function toSlash(path) {
 const GIT_TIMEOUT_MS = 3000
 const GIT_MAX_BYTES = 1_000_000
 const GIT_CACHE_TTL_MS = 30_000
+const GIT_LOG_COMMITS = 20
 
 /**
  * Run `git <args>` to completion with a timeout and a bounded stdout. Every
@@ -422,12 +423,29 @@ export async function gitState(root, deps = {}) {
         time: Number.isFinite(Number(at)) ? Number(at) * 1000 : undefined,
       }
     }
+    // The recent-commit list for the bottom bar's expandable panel: newest
+    // first (git log's own order); the client renders it bottom-anchored.
+    const logList = await run(['log', '-n', String(GIT_LOG_COMMITS), '--format=%h%x09%at%x09%an%x09%s'], root)
+    const commits = []
+    if (logList.code === 0) {
+      for (const line of logList.stdout.split(/\r?\n/)) {
+        if (line.trim() === '') continue
+        const [hash = '', at = '', author = '', ...subject] = line.split('\t')
+        commits.push({
+          hash,
+          subject: subject.join('\t'),
+          author,
+          time: Number.isFinite(Number(at)) ? Number(at) * 1000 : undefined,
+        })
+      }
+    }
     return {
       available: true,
       branch: parsed.branch,
       ahead: parsed.ahead,
       behind: parsed.behind,
       head,
+      commits,
       status: parsed.files,
       prefix,
     }
@@ -470,6 +488,7 @@ function attachGitState(value, state) {
     ahead: state.ahead,
     behind: state.behind,
     head: state.head,
+    commits: state.commits ?? [],
   }
 }
 

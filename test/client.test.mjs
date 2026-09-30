@@ -595,6 +595,10 @@ describe('rendering the tree', () => {
           ahead: 1,
           behind: 0,
           head: { hash: 'a1b2c3d', subject: 'feat: something', author: 'tester', time: 1735700645000 },
+          commits: [
+            { hash: 'a1b2c3d', subject: 'feat: something', author: 'tester', time: 1735700645000 },
+            { hash: 'e4f5a6b', subject: 'chore: earlier', author: 'tester', time: 1735614245000 },
+          ],
         },
         entries: [
           { name: 'src', type: 'directory', mtimeMs: 1735787045000 },
@@ -688,11 +692,17 @@ describe('rendering the tree', () => {
     assert.deepEqual(refs.map((ref) => textOf(ref.children)), ['@文件夹', '@文件'])
   })
 
-  it('shows the git state dot on files and the git line under the header (R40a)', async () => {
-    const { tree, plugin } = await renderBody()
-    // R40a: the header's git line — branch, sync counts, commit summary, relative age.
-    const gitline = collect(tree, (node) => node.props?.['data-at-sider-git'] === 'head')[0]
-    assert.ok(gitline, 'the git line renders when the workspace answered with a repository')
+  it('shows the git state dot on files and the bottom git bar (R40a)', async () => {
+    const { tree, plugin, react, props } = await renderBody()
+    // R40a: the bottom bar — branch, sync counts, commit summary, relative age.
+    const bar = () => collect(treeRef.tree, (node) => node.props?.['data-at-sider-git'] === 'head')[0]
+    const treeRef = { tree }
+    assert.ok(bar(), 'the bottom git bar renders when the workspace answered with a repository')
+    const gitline = bar()
+    assert.equal(gitline.type, 'button', 'the bar is a toggle button')
+    assert.equal(gitline.props['aria-expanded'], false, 'collapsed until clicked')
+    assert.equal(collect(treeRef.tree, (node) => node.props?.['data-at-sider-git-panel'] !== undefined).length, 0,
+      'the commit panel is not rendered while collapsed')
     const branch = collect([gitline], (node) => node.props?.className === 'ats-gitBranch')[0]
     assert.match(textOf([branch]), /main/)
     const commit = collect([gitline], (node) => node.props?.className === 'ats-gitCommit')[0]
@@ -703,14 +713,33 @@ describe('rendering the tree', () => {
     assert.ok(textOf([time]).length > 0, 'the commit age is rendered')
     assert.match(gitline.props.title, /a1b2c3d/, 'the full tooltip carries hash, author, and time')
 
+    // Clicking expands the commit list upward: oldest first, newest last (the
+    // row nearest the bar), and the newest is the HEAD the bar shows.
+    gitline.props.onClick()
+    const opened = react.render(plugin.__internals.components.FilesBody, props)
+    const panel = collect(opened.tree, (node) => node.props?.['data-at-sider-git-panel'] !== undefined)[0]
+    assert.ok(panel, 'the commit panel renders after the click')
+    const hashes = collect([panel], (node) => node.props?.className === 'ats-gitHash').map((node) => node.children[0])
+    assert.deepEqual(hashes, ['e4f5a6b', 'a1b2c3d'], 'oldest at the top, newest at the bottom')
+    const headMark = collect([panel], (node) => node.props?.className === 'ats-gitHeadMark')
+    assert.equal(headMark.length, 1, 'exactly the newest commit is marked as HEAD')
+
+    // Clicking again collapses it.
+    const bar2 = collect(opened.tree, (node) => node.props?.['data-at-sider-git'] === 'head')[0]
+    assert.equal(bar2.props['aria-expanded'], true)
+    bar2.props.onClick()
+    const closed = react.render(plugin.__internals.components.FilesBody, props)
+    assert.equal(collect(closed.tree, (node) => node.props?.['data-at-sider-git-panel'] !== undefined).length, 0,
+      'the panel collapses on the second click')
+
     // The file's dot: class + tooltip; a directory and an 'other' entry have none.
-    const dots = collect(tree, (node) => node.props?.['data-at-sider-git'] !== undefined
+    const dots = collect(treeRef.tree, (node) => node.props?.['data-at-sider-git'] !== undefined
       && node.props?.['data-at-sider-git'] !== 'head')
     assert.equal(dots.length, 1)
     assert.equal(dots[0].props['data-at-sider-git'], 'unstaged')
     assert.equal(dots[0].props.title, '有未暂存的修改')
     assert.match(dots[0].props.className, /ats-gitDot ats-gitUnstaged/)
-    const srcRow = collect(tree, (node) => node.props?.['data-at-sider-path'] === `${ROOT}/src`)[0]
+    const srcRow = collect(treeRef.tree, (node) => node.props?.['data-at-sider-path'] === `${ROOT}/src`)[0]
     assert.equal(collect([srcRow], (node) => node.props?.['data-at-sider-git'] !== undefined).length, 0,
       'a directory carries no dot')
   })

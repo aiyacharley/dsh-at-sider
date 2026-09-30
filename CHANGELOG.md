@@ -2,16 +2,18 @@
 
 ## Unreleased
 
-- Feature: **git state on rows and the header (R40a)** — files that are
+- Feature: **git state on rows and the bottom bar (R40a)** — files that are
   untracked, modified (unstaged), or staged get a coloured dot right after the
-  name (with a naming tooltip), and the header gains a git line: branch,
-  ahead/behind, the HEAD commit's short hash, subject, and relative age (full
-  hash, author, and time on hover). Outside a repository, or without a git
+  name (with a naming tooltip), and a **bottom bar** pinned under the tree shows
+  the branch, ahead/behind, the HEAD commit's short hash, subject, and relative
+  age (full hash, author, and time on hover). **Clicking the bar expands the
+  commit list upward** — the last 20 commits, oldest at the top and the newest
+  at the bottom with a HEAD marker. Outside a repository, or without a git
   executable, nothing renders. The state rides the existing listing route:
-  one bounded `git status --porcelain=v1 -z --branch` (+ `rev-parse` and
-  `git log -1`) per workspace root, cached 30 s with in-flight deduplication,
-  a 3 s timeout and a 1 MB output cap; a workspace that is a subdirectory of
-  its repository maps status paths through `--show-prefix`.
+  one bounded `git status --porcelain=v1 -z --branch` (+ `rev-parse`,
+  `git log -1`, and `git log -n 20`) per workspace root, cached 30 s with
+  in-flight deduplication, a 3 s timeout and a 1 MB output cap; a workspace that
+  is a subdirectory of its repository maps status paths through `--show-prefix`.
 - Investigation recorded (ROADMAP §2.4): the in-box `dsh-workspace-changes`
   plugin is a per-turn snapshot diff and cannot serve the current work-tree
   state; its `GitRunner` shape was adopted as the reference. Per-file last-commit

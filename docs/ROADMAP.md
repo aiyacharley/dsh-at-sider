@@ -111,7 +111,7 @@
 
 | 项 | 内容 | 前置调查 | 状态 |
 |---|---|---|---|
-| **R40a Git 状态着色 + 页头提交信息** | 文件行三态色点（未跟踪/未暂存/已暂存，目录不着色）；页头新增 git 行 `⎇ branch ↑a ↓b · hash subject（相对时间）`，悬停见完整 hash/作者/时间。**调查结论（2026-09-30）**：`dsh-workspace-changes` 不可复用——它是**回合级快照对比**（"本回合改了什么"，turn-start/turn-end numstat），不是当前工作树状态（无 staged/unstaged/untracked 语义），且记录仅随会话存活（Session disposed 即清零）；其 `GitRunner` 的界限形状（子进程 + 超时 + 输出上限 + 环境清洗）作为实现参照 | Host：`git status --porcelain=v1 -z --branch` + `rev-parse --show-toplevel/--show-prefix`（子目录工作区用前缀映射）+ `git log -1`，单次调用按 cwd 缓存（30s TTL + 在途去重 + 3s 超时/输出上限）；exit≠0 / 无 git → `available:false` **零元素降级**；结果挂进现有 list 路由（entry 级 `git` 字段 + 根级 `git` 块），不新增路由。client：行色点（仅 alias token + 字面量兜底）+ 页头 git 行。规模 ~1.25d | ✅ 方案 A 已实现（待发布） |
+| **R40a Git 状态着色 + 底部 git 栏** | 文件行三态色点（未跟踪/未暂存/已暂存，目录不着色）；**侧栏底部**新增 git 栏 `⎇ branch ↑a ↓b · hash subject（相对时间）`，**点击向上展开提交列表**（最近 20 条，最底下是最新提交并带 HEAD 标记），悬停见完整 hash/作者/时间。**调查结论（2026-09-30）**：`dsh-workspace-changes` 不可复用——它是**回合级快照对比**（"本回合改了什么"，turn-start/turn-end numstat），不是当前工作树状态（无 staged/unstaged/untracked 语义），且记录仅随会话存活（Session disposed 即清零）；其 `GitRunner` 的界限形状（子进程 + 超时 + 输出上限 + 环境清洗）作为实现参照 | Host：`git status --porcelain=v1 -z --branch` + `rev-parse --show-toplevel/--show-prefix`（子目录工作区用前缀映射）+ `git log -1` + `git log -n 20`，单次调用按 cwd 缓存（30s TTL + 在途去重 + 3s 超时/输出上限）；exit≠0 / 无 git → `available:false` **零元素降级**；结果挂进现有 list 路由（entry 级 `git` 字段 + 根级 `git` 块含 `commits`），不新增路由。client：行色点 + 底部栏与展开面板。规模 ~1.25d | ✅ 方案 A 已实现（待发布） |
 | **R40b 按文件最后提交** | 行 tooltip 按需查询每文件最后提交（批量 `git log --name-only` 建索引或悬停单查 + 缓存），不做常显——仓库大时输出上限敏感 | Host 扩展（R40a 之上） | 缓议（R40a 之后的增量，~0.5–1d） |
 | R41 会话级记忆 | 展开状态/滚动位置按工作区持久化，重启恢复（原生没有，差异化） | 插件自有存储服务选型 | 缓议 |
 | R42 在此打开终端 | 目录行菜单"在此打开终端" | `dsh-api-terminal-controller` 的 openTab 参数 | 缓议 |
