@@ -22,6 +22,10 @@ decide whether the change is live.
 dsh plugin --profile web add link:C:/path/to/dsh-at-sider
 ```
 
+> `web` is only the profile name this workspace has used for the CLI. The desktop
+> app keeps its own profile (`desktop`). Put the profile that is actually active
+> after `--profile`; the plugin behaves the same in either.
+
 Then add the id to the profile's bundle list
 (`~/.dsh/profiles/web/package.json`):
 
@@ -37,11 +41,12 @@ Then add the id to the profile's bundle list
 
 Restart `dsh web` (Ctrl+C, then `dsh web` again).
 
-A local `link:` dependency is what the sibling `dsh-pubmed` plugin in this
-workspace uses, so this is the shape the profile already understands:
+A local `link:` dependency points the profile straight at this working tree —
+handy while developing, and the shape the profile understands (the released
+artifacts are installed as ordinary registry versions instead):
 
 ```json
-"dependencies": { "dsh-at-sider": "link:C:/iWork/github_project/pubmed-mcp-server/dsh-at-sider" }
+"dependencies": { "dsh-at-sider": "link:C:/iWork/github_project/DSH插件开发/dsh-at-sider" }
 ```
 
 ## 3. Verify the composition without installing

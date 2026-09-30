@@ -364,8 +364,10 @@ npm test          # node --test, 83 cases, fully offline (no network, no browser
 
 ## Requirements
 
-- DSH `0.1.7-rc.2` (web profile), the version this was built and tested against
-  (declared in `dsh.compatibility`).
+- DSH `0.1.7-rc.2` (the design baseline) — re-verified on `0.2.0-rc.1` (CLI,
+  `dsh web`) and `0.2.0-rc.2` (desktop app); all three are declared in
+  `dsh.compatibility`. Either the `web` or the `desktop` profile works — put the
+  profile actually in use after `--profile`.
 - Node.js ≥ 20 (the Host half uses `node:fs/promises`).
 
 ---

@@ -7,7 +7,7 @@
 - 已注册 npm 账号：<https://www.npmjs.com/>
 - 包名未被占用：`npm view dsh-at-sider` 返回 404 = 可用
 - **沙箱受限时需要普通终端**——DSH 的 pwsh 只读/工作区写沙箱会拦截网络访问；本机已在
-  `danger-full-access` 下直接发布成功（0.0.1–0.1.0 均如此），受限时才改用 WSL / Linux / 普通终端
+  `danger-full-access` 下直接发布成功（0.0.1–0.2.0 均如此），受限时才改用 WSL / Linux / 普通终端
 
 ## 发布步骤
 
@@ -103,7 +103,7 @@ npm publish --registry=https://registry.npmjs.org   # 不再需要验证码
 `scripts/sync-mirror.mjs` 让 npmmirror 尽快同步。
 
 > ⚠️ **本仓当前不依赖这条路径**：`NPM_TOKEN` secret 的生效问题已由用户决策关闭（ROADMAP §2.5
-> T4），0.0.1–0.1.0 全部由**本机 `npm publish`** 发布。release.yml 仍会建 GitHub Release，但
+> T4），0.0.1–0.2.0 全部由**本机 `npm publish`** 发布。release.yml 仍会建 GitHub Release，但
 > 「是否已发布到 npm」以本机发布结果 + `npm view` 为准。
 
 > 🔒 token 等同密码：只存本地/仓库 secret，勿提交 git、勿外泄。

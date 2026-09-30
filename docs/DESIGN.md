@@ -374,7 +374,7 @@ place:
 
 ## 12. Verification performed
 
-- `node --test test/host.test.mjs test/client.test.mjs` — **78 tests**: containment
+- `node --test test/host.test.mjs test/client.test.mjs` — **83 tests**: containment
   (including the sibling-prefix and `..` cases), per-entry `mtimeMs`, truncation,
   failure-code mapping, bounded concurrency; the listing route's request/response
   contract; `apply()` registering **two** authenticated POST routes and staying
@@ -392,7 +392,8 @@ place:
   size formatting, width tiers, sort comparators, the header sort cycle with its
   persistence, and the tier CSS; the quick filter (debounce, result list, chip,
   clearing) and reveal expansion; the expansion memory across an unmount/
-  remount; the git dot and the header's git line with their no-git degradation;
+  remount; the git dot and the bottom git bar with their no-git degradation, the
+  multi-repository discovery and selector, and the invalid-`.git` degradation;
   tree semantics (`role` / `aria-level` /
   `aria-expanded`) and the keyboard-navigation branches; and a rendered-tree
   smoke test through a minimal React shim (rows, dates, `@` buttons, a directory
@@ -401,11 +402,18 @@ place:
   composes and the `dsh-at-sider` row lands in the composed profile.
 - The published artifacts: installed from the npm registry into a scratch prefix,
   imported by name, and checked for their `dsh.client` / `dsh.bundle`
-  declarations (0.0.1–0.0.4 done at their releases; 0.1.0 published from this
-  checkout).
+  declarations (0.0.1–0.2.0: 0.0.1–0.0.4 verified at their releases; 0.1.0,
+  0.1.1, and 0.2.0 published from this checkout).
 
 Not verified: the rendered GUI itself, and therefore the actual visual result,
 could not be checked in this environment (installing into the profile and
 restarting `dsh web` were left to the operator). The operator has since verified
 the quick filter and keyboard navigation on a live profile (v0.1.0), and reported
 the reveal highlight and the menu font size as issues — both fixed in 0.1.0.
+
+Re-verified on a newer host (v0.2.0): everything above was read off DSH
+`0.1.7-rc.2`, and the operator has since run v0.2.0 on DSH `0.2.0-rc.2` (desktop
+app, profile `desktop`) and `0.2.0-rc.1` (CLI, profile `web`) — the git bar, the
+multi-repository selector, and the runtime fallback all behaved as designed, so
+all three releases are declared in `dsh.compatibility`. The fragile surfaces
+listed in §11 remain the checklist should a future host change them.

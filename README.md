@@ -235,7 +235,7 @@ npm test          # node --test，83 个用例，全离线（无网络、无浏�
 
 ## 要求
 
-- DSH `0.1.7-rc.2`（web profile），已在 version 上实测（`package.json` 的 `dsh.compatibility` 声明）
+- DSH `0.1.7-rc.2`（设计基线）——已在 `0.2.0-rc.1`（CLI `dsh web`）与 `0.2.0-rc.2`（桌面 App）上实测通过，三个版本都写进 `package.json` 的 `dsh.compatibility`；profile 用 `web` 或 `desktop` 均可（命令里的 `--profile` 填实际在用的那个）。
 - Node.js ≥ 20（Host 半使用 `node:fs/promises`）
 
 ---
