@@ -576,4 +576,60 @@ describe('git state (R40a)', () => {
     assert.equal(value.git.head, undefined)
     assert.equal(value.entries[0].git, undefined)
   })
+
+  describe('multi-repository workspaces (R40a)', () => {
+    /** Build one repository at `dir` with one committed + one modified file. */
+    const makeRepo = async (dir, subject) => {
+      await mkdir(dir, { recursive: true })
+      git(dir, 'init', '-b', 'main')
+      await writeFile(join(dir, 'committed.txt'), 'committed')
+      git(dir, 'add', '.')
+      git(dir, '-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-m', subject)
+      await writeFile(join(dir, 'committed.txt'), 'modified now')
+    }
+
+    it('discovers repositories at the first and second levels, not deeper', async () => {
+      const base = await mkdtemp(join(tmpdir(), 'dsh-at-sider-disc-'))
+      const ws = join(base, 'ws')
+      await mkdir(join(ws, 'plain'), { recursive: true })
+      await makeRepo(join(ws, 'alpha'), 'alpha initial')
+      await makeRepo(join(ws, 'tools', 'beta'), 'beta initial')
+      await makeRepo(join(ws, 'tools', 'beta', 'too-deep', 'nested'), 'too deep')
+      const repos = await __internals.discoverRepos(ws, { now: () => Date.now() })
+      assert.deepEqual(repos.map((repo) => repo.rel).sort(), ['alpha', 'tools/beta'],
+        'level-1 and level-2 repositories are discovered; level-3 is not')
+      await rm(base, { recursive: true, force: true })
+    })
+
+    it('serves a repository selector and per-repo dots for a workspace of sub-repositories', async () => {
+      const base = await mkdtemp(join(tmpdir(), 'dsh-at-sider-multi-'))
+      const ws = join(base, 'ws')
+      await mkdir(ws, { recursive: true })
+      await makeRepo(join(ws, 'alpha'), 'alpha initial')
+      await makeRepo(join(ws, 'libs', 'beta'), 'beta initial')
+      await writeFile(join(ws, 'stray.txt'), 'inside no repository')
+
+      const list = async (gitRepo) => handleListRequest(new Request(`http://127.0.0.1${ROUTE_PATH}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sessionId: 's1', path: ws, gitRepo }),
+      }), { getSessionRoot: () => ws }).then((response) => response.json())
+
+      // Default: the first discovered repository is selected.
+      const first = await list(undefined)
+      assert.equal(first.value.git.available, true)
+      assert.deepEqual(first.value.git.repos.map((repo) => repo.rel).sort(), ['alpha', 'libs/beta'])
+      assert.equal(first.value.git.selected, 'alpha')
+      const firstByName = new Map(first.value.entries.map((entry) => [entry.name, entry]))
+      assert.equal(firstByName.get('alpha').type, 'directory')
+      assert.equal(firstByName.get('stray.txt').git, undefined, 'a file in no repository has no dot')
+
+      // Selecting the other repository re-anchors the state.
+      const second = await list('libs/beta')
+      assert.equal(second.value.git.selected, 'libs/beta')
+      assert.ok(second.value.git.head.subject.startsWith('beta initial'))
+      assert.equal(second.value.git.commits[0].hash, second.value.git.head.hash)
+      await rm(base, { recursive: true, force: true })
+    })
+  })
 })

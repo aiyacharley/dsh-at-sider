@@ -246,6 +246,17 @@ absolute time. Everything degrades to nothing: outside a repository, or without
 a git executable, the response says `available: false` and neither the dots, the
 bar, nor the panel render.
 
+**Multi-repository workspaces.** A workspace does not have to be a repository
+itself: the Host discovers repositories at the workspace root (or the repository
+that encloses it), plus every first- and second-level subdirectory holding a
+`.git` entry (a directory, or a file for worktrees/submodules). Discovery is
+filesystem-only — one `git rev-parse` probe for the enclosing repository, then
+two bounded directory levels — and cached like the git state. When more than one
+repository is found, the bar gains a **repository selector**; the picked
+repository's rel rides the next listing requests (`gitRepo`), and the Host
+re-anchors branch, commits, and per-file dots to it. Files outside the selected
+repository carry no dot.
+
 The in-box `dsh-workspace-changes` plugin was evaluated first and rejected for
 this job: it records **per-turn snapshot diffs** ("what did this turn change",
 turn-start vs turn-end numstat), which is a different question from the current
@@ -256,8 +267,8 @@ facts rather than exceptions — is what this plugin's own bounded runner mirror
 
 Mechanics:
 
-- one `git status --porcelain=v1 -z --branch` per workspace root gives every
-  file's state plus the branch and ahead/behind counts; `git rev-parse
+- one `git status --porcelain=v1 -z --branch` per **selected repository** gives
+  every file's state plus the branch and ahead/behind counts; `git rev-parse
   --show-toplevel --show-prefix` locates the repository and, when the workspace
   root is a subdirectory of it, provides the prefix that maps repository-relative
   status paths onto the workspace's entries; `git log -1` provides the HEAD and

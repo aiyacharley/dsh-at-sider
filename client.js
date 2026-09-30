@@ -109,8 +109,10 @@ window.__ModuleLoader__.load({
 .ats-gitUntracked{background:var(--dsw-alias-success,#3fb950)}
 .ats-gitUnstaged{background:var(--dsw-alias-warning,#d29922)}
 .ats-gitStaged{background:var(--dsw-alias-accent,#4c8dff)}
-.ats-gitline{box-sizing:border-box;border-top:.5px solid var(--dsw-alias-border-l3);flex:none;align-items:center;gap:8px;width:100%;padding:4px 12px;display:flex;white-space:nowrap;overflow:hidden;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.4;cursor:pointer;background:0 0;border-left:none;border-right:none;border-bottom:none;font-family:inherit;text-align:left}
-.ats-gitline:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.ats-gitline{box-sizing:border-box;border-top:.5px solid var(--dsw-alias-border-l3);flex:none;align-items:center;gap:8px;width:100%;padding:3px 10px;display:flex;white-space:nowrap;overflow:hidden;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.4}
+.ats-gitToggle{flex:1;min-width:0;align-items:center;gap:8px;display:flex;white-space:nowrap;overflow:hidden;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;line-height:1.4;cursor:pointer;background:0 0;border:none;border-radius:var(--dsw-radius-sm);padding:2px 4px;text-align:left}
+.ats-gitToggle:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.ats-gitSelect{flex:none;max-width:45%;box-sizing:border-box;background:0 0;border:1px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-sm);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;padding:1px 4px}
 .ats-gitPanelWrap{flex:none;display:flex;flex-direction:column;justify-content:flex-end;min-height:0}
 .ats-gitPanel{box-sizing:border-box;max-height:200px;overflow-y:auto;border-top:.5px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-bg-base);padding:2px 0}
 .ats-gitRow{display:flex;align-items:baseline;gap:8px;padding:2px 12px;white-space:nowrap;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.5}
@@ -173,6 +175,8 @@ window.__ModuleLoader__.load({
       gitMeta: 'ats-gitMeta',
       gitHeadMark: 'ats-gitHeadMark',
       gitChevron: 'ats-gitChevron',
+      gitToggle: 'ats-gitToggle',
+      gitSelect: 'ats-gitSelect',
     }
 
     /** Install the stylesheet once per document; unload leaves it for the next load to reuse. */
@@ -474,12 +478,12 @@ window.__ModuleLoader__.load({
      * @param {AbortSignal} [signal] - caller cancellation.
      * @returns {Promise<{ ok: true, value: object } | { ok: false, error: { code: string, message: string } }>} the level.
      */
-    async function listDirectory(sessionId, path, signal) {
+    async function listDirectory(sessionId, path, signal, gitRepo) {
       try {
         const response = await fetch(ROUTE_PATH, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ sessionId, path }),
+          body: JSON.stringify({ sessionId, path, gitRepo }),
           credentials: 'same-origin',
           signal,
         })
@@ -524,6 +528,13 @@ window.__ModuleLoader__.load({
                   }]
                 })
                 : undefined,
+              repos: Array.isArray(rawGit.repos)
+                ? rawGit.repos.flatMap((repo) => {
+                  if (repo === null || typeof repo !== 'object' || typeof repo.rel !== 'string' || typeof repo.name !== 'string') return []
+                  return [{ name: repo.name, rel: repo.rel }]
+                })
+                : undefined,
+              selected: typeof rawGit.selected === 'string' ? rawGit.selected : undefined,
             }
             : { available: false }
           return {
@@ -1127,7 +1138,7 @@ window.__ModuleLoader__.load({
       React.useEffect(() => {
         const controller = new AbortController()
         setLevel((previous) => (previous.phase === 'ready' ? previous : { phase: 'loading' }))
-        listDirectory(sessionId, parent, controller.signal).then((result) => {
+        listDirectory(sessionId, parent, controller.signal, props.gitRepo).then((result) => {
           if (controller.signal.aborted) return
           if (result.ok) {
             retryCount.current = 0
@@ -1254,6 +1265,14 @@ window.__ModuleLoader__.load({
       // root level after each successful read (undefined until then, and
       // `{ available: false }` outside a repository).
       const [gitInfo, setGitInfo] = React.useState(undefined)
+      // The selected repository among the discovered ones (undefined = the
+      // Host's default); switching bumps the revision so every level refetches
+      // with the new repo.
+      const [gitRepo, setGitRepo] = React.useState(undefined)
+      const onRepoChange = (rel) => {
+        setGitRepo(rel)
+        setRevision((value) => value + 1)
+      }
       const bodyRef = React.useRef(null)
       const scrollRef = React.useRef(0)
       const searchTimer = React.useRef(0)
@@ -1388,6 +1407,7 @@ window.__ModuleLoader__.load({
         onOpen,
         onReference,
         onGit: setGitInfo,
+        gitRepo,
         onTreeNav: treeKeyDown,
         focusedPath,
         setFocusedPath,
@@ -1479,29 +1499,36 @@ window.__ModuleLoader__.load({
                 h('span', { className: css.gitMeta }, `${commit.author}${commit.author !== '' && age !== '' ? ' · ' : ''}${age}`),
                 index === list.length - 1 && h('span', { className: css.gitHeadMark, title: t('git.head') }, '●'))
             })),
-        h('button', {
-          type: 'button',
-          className: css.gitline,
-          'data-at-sider-git': 'head',
-          'aria-expanded': gitOpen,
-          'aria-label': t('git.aria'),
-          title: gitInfo.head === undefined
-            ? t('git.branch', { n: gitInfo.branch ?? '' })
-            : t('git.commit.title', {
-              hash: gitInfo.head.hash,
-              subject: gitInfo.head.subject,
-              author: gitInfo.head.author,
-              time: gitInfo.head.time !== undefined ? formatMtime(gitInfo.head.time) : '',
-            }),
-          onClick: toggleGit,
-        },
-        h('span', { className: css.gitBranch }, `⎇ ${gitInfo.branch ?? ''}`),
-        (gitInfo.ahead > 0 || gitInfo.behind > 0) && h('span', { className: css.gitSync },
-          `${gitInfo.ahead > 0 ? `↑${String(gitInfo.ahead)}` : ''}${gitInfo.behind > 0 ? ` ↓${String(gitInfo.behind)}` : ''}`),
-        gitInfo.head !== undefined && h('span', { className: css.gitCommit },
-          `${gitInfo.head.hash} ${gitInfo.head.subject}`),
-        gitInfo.head?.time !== undefined && h('span', { className: css.gitTime }, relativeAgeText(gitInfo.head.time, t)),
-        h('span', { className: css.gitChevron, 'aria-hidden': 'true' }, gitOpen ? '▾' : '▸')),
+        h('div', { className: css.gitline },
+          Array.isArray(gitInfo.repos) && gitInfo.repos.length > 1 && h('select', {
+            className: css.gitSelect,
+            value: gitInfo.selected ?? '',
+            'aria-label': t('git.select'),
+            'data-at-sider-git-select': true,
+            onChange: (event) => onRepoChange(event.target.value),
+          }, gitInfo.repos.map((repo) => h('option', { key: repo.rel, value: repo.rel }, repo.name))),
+          h('button', {
+            type: 'button',
+            className: css.gitToggle,
+            'data-at-sider-git': 'head',
+            'aria-expanded': gitOpen,
+            title: gitInfo.head === undefined
+              ? t('git.branch', { n: gitInfo.branch ?? '' })
+              : t('git.commit.title', {
+                hash: gitInfo.head.hash,
+                subject: gitInfo.head.subject,
+                author: gitInfo.head.author,
+                time: gitInfo.head.time !== undefined ? formatMtime(gitInfo.head.time) : '',
+              }),
+            onClick: toggleGit,
+          },
+          h('span', { className: css.gitBranch }, `⎇ ${gitInfo.branch ?? ''}`),
+          (gitInfo.ahead > 0 || gitInfo.behind > 0) && h('span', { className: css.gitSync },
+            `${gitInfo.ahead > 0 ? `↑${String(gitInfo.ahead)}` : ''}${gitInfo.behind > 0 ? ` ↓${String(gitInfo.behind)}` : ''}`),
+          gitInfo.head !== undefined && h('span', { className: css.gitCommit },
+            `${gitInfo.head.hash} ${gitInfo.head.subject}`),
+          gitInfo.head?.time !== undefined && h('span', { className: css.gitTime }, relativeAgeText(gitInfo.head.time, t)),
+          h('span', { className: css.gitChevron, 'aria-hidden': 'true' }, gitOpen ? '▾' : '▸'))),
       ))
     }
 
@@ -1613,6 +1640,7 @@ window.__ModuleLoader__.load({
       'git.aria': 'Git 状态与最近提交',
       'git.head': '当前提交（最新）',
       'git.noCommits': '没有提交记录',
+      'git.select': '选择仓库',
       'time.now': '刚刚',
       'time.minutes': '{n} 分钟前',
       'time.hours': '{n} 小时前',
@@ -1671,6 +1699,7 @@ window.__ModuleLoader__.load({
       'git.aria': 'Git status and recent commits',
       'git.head': 'Current commit (newest)',
       'git.noCommits': 'No commits yet',
+      'git.select': 'Select repository',
       'time.now': 'just now',
       'time.minutes': '{n} min ago',
       'time.hours': '{n} h ago',

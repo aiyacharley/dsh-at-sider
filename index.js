@@ -19,7 +19,7 @@
  */
 import { spawn } from 'node:child_process'
 import { readdir, stat } from 'node:fs/promises'
-import { isAbsolute, join, resolve } from 'node:path'
+import { basename, isAbsolute, join, relative, resolve } from 'node:path'
 
 /** The exact route this plugin owns, under Connection's authenticated `/api` fence. */
 export const ROUTE_PATH = '/api/dsh-at-sider/list'
@@ -247,6 +247,7 @@ export async function handleListRequest(request, deps) {
   const record = typeof body === 'object' && body !== null ? body : {}
   const sessionId = typeof record.sessionId === 'string' ? record.sessionId : ''
   const path = typeof record.path === 'string' ? record.path : ''
+  const gitRepo = typeof record.gitRepo === 'string' ? record.gitRepo : undefined
   if (sessionId === '') return failure('bad-request', 'missing sessionId', 400)
   if (path === '') return failure('bad-request', 'missing path', 400)
   let root
@@ -259,10 +260,22 @@ export async function handleListRequest(request, deps) {
   try {
     const value = await listDirectory(root, path)
     // R40a: git state rides the listing; a failure here must never fail the
-    // listing itself.
+    // listing itself. Repositories relevant to the workspace are discovered
+    // first (the root itself, one that encloses it, or first/second-level
+    // subdirectories); the request's `gitRepo` picks which one is shown, and
+    // defaults to the first discovery.
     try {
-      const state = await gitState(root, typeof deps.runGit === 'function' ? { runGit: deps.runGit } : {})
-      attachGitState(value, state)
+      const gitDeps = typeof deps.runGit === 'function' ? { runGit: deps.runGit } : {}
+      const repos = await discoverRepos(root, gitDeps)
+      const selected = repos.length === 0
+        ? undefined
+        : (repos.find((repo) => repo.rel === gitRepo) ?? repos[0])
+      if (selected === undefined) {
+        value.git = { available: false }
+      } else {
+        const state = await gitState(selected.enclosing === true ? root : selected.path, gitDeps)
+        attachGitState(value, state, { repoRel: selected.enclosing === true ? '' : selected.rel, repos, selectedRel: selected.rel })
+      }
     } catch {
       value.git = { available: false }
     }
@@ -388,6 +401,9 @@ export function parseStatus(stdout) {
 /** The git facts one workspace root resolves to; cached per cwd for {@link GIT_CACHE_TTL_MS}. */
 const gitCache = new Map()
 const gitInFlight = new Map()
+/** Discovered repositories per workspace root; cached like the git state. */
+const repoDiscoveryCache = new Map()
+const repoDiscoveryInFlight = new Map()
 
 /**
  * Read the workspace's git state: repository location, status map, and HEAD.
@@ -464,23 +480,37 @@ export async function gitState(root, deps = {}) {
  * Attach the git state to a listing: the root-level block plus one `git` field
  * per file entry whose workspace-relative path the status map covers.
  * @param {{ path: string, root: string, entries: object[] }} value - the listing.
- * @param {object} state - the state {@link gitState} resolved for the root.
+ * @param {object} state - the state {@link gitState} resolved for the selected repository.
+ * @param {{ repoRel?: string, repos?: object[], selectedRel?: string }} [extras] - multi-repo context: `repoRel` is the selected repository's path relative to the workspace root ('' when the repository encloses the workspace); `repos`/`selectedRel` describe the discovered repositories for the Client's selector.
  * @returns {void} mutates `value` in place.
  */
-function attachGitState(value, state) {
+function attachGitState(value, state, extras = {}) {
   if (state.available !== true) {
     value.git = { available: false }
     return
   }
-  const prefix = state.prefix ?? ''
+  // Where the workspace root sits inside the selected repository, spelled the
+  // way the status map's keys are spelled (repository-relative, `/`-separated):
+  // - a repository that encloses the workspace reports the offset itself via
+  //   `--show-prefix` (`state.prefix`);
+  // - a repository nested inside the workspace is addressed by `extras.repoRel`.
+  const nestedPrefix = extras.repoRel !== undefined && extras.repoRel !== '' ? `${extras.repoRel}/` : ''
+  const enclosingPrefix = state.prefix ?? ''
   const base = toSlash(value.path).startsWith(toSlash(value.root))
     ? toSlash(value.path).slice(toSlash(value.root).length).replace(/^\/+|\/+$/g, '')
     : ''
   for (const entry of value.entries) {
     if (entry.type !== 'file') continue
-    const relative = base === '' ? entry.name : `${base}/${entry.name}`
-    const state2 = state.status.get(`${prefix}${relative}`)
-    if (state2 !== undefined) entry.git = state2
+    const workspaceRelative = base === '' ? entry.name : `${base}/${entry.name}`
+    let repoRelative
+    if (nestedPrefix !== '') {
+      if (!workspaceRelative.startsWith(nestedPrefix)) continue
+      repoRelative = `${enclosingPrefix}${workspaceRelative.slice(nestedPrefix.length)}`
+    } else {
+      repoRelative = `${enclosingPrefix}${workspaceRelative}`
+    }
+    const fileState = state.status.get(repoRelative)
+    if (fileState !== undefined) entry.git = fileState
   }
   value.git = {
     available: true,
@@ -489,6 +519,93 @@ function attachGitState(value, state) {
     behind: state.behind,
     head: state.head,
     commits: state.commits ?? [],
+    repos: extras.repos,
+    selected: extras.selectedRel,
+  }
+}
+
+/**
+ * Discover git repositories relevant to a workspace: the workspace root itself
+ * (when it is a repository or lies inside one), plus every first- and
+ * second-level subdirectory that holds a `.git` entry (a directory, or a file
+ * for worktrees/submodules). The probe for the enclosing repository runs one
+ * bounded `git rev-parse`; the scan is filesystem-only.
+ * @param {string} root - absolute workspace root.
+ * @param {{ runGit?: typeof runGit, now?: () => number }} [deps] - test seams.
+ * @returns {Promise<object[]>} `{ name, rel, path, enclosing? }` rows; `rel` is '' for a repository that encloses the workspace, otherwise its workspace-relative directory.
+ */
+export async function discoverRepos(root, deps = {}) {
+  const run = deps.runGit ?? runGit
+  const now = deps.now ?? Date.now
+  const key = toSlash(root)
+  const cached = repoDiscoveryCache.get(key)
+  if (cached !== undefined && cached.expires > now()) return cached.value
+  const inFlight = repoDiscoveryInFlight.get(key)
+  if (inFlight !== undefined) return inFlight
+  const value = await (async () => {
+    // A repository that encloses the workspace (or is the workspace root) owns
+    // every entry the tree can show; nested `.git` directories under it are
+    // submodules/gitlinks the repository itself already accounts for.
+    const probe = await run(['rev-parse', '--show-toplevel'], root)
+    if (probe.code === 0) {
+      const top = probe.stdout.split(/\r?\n/)[0]?.trim()
+      if (top !== undefined && top !== '') {
+        const rootResolved = toSlash(resolve(root))
+        const topResolved = toSlash(resolve(top))
+        if (rootResolved.toLowerCase() === topResolved.toLowerCase()) {
+          return [{ name: basename(root), rel: '', path: resolve(root) }]
+        }
+        const inner = toSlash(relative(topResolved, rootResolved))
+        if (inner !== '' && !inner.startsWith('..')) {
+          return [{ name: basename(topResolved), rel: '', path: resolve(top), enclosing: true }]
+        }
+      }
+    }
+    // The workspace is outside any repository: scan its first two directory
+    // levels for `.git` entries.
+    const repos = []
+    let level1
+    try {
+      level1 = await readdir(root, { withFileTypes: true })
+    } catch {
+      return []
+    }
+    const hasGit = async (dirAbs) => {
+      try {
+        const gitEntry = await stat(join(dirAbs, '.git'))
+        return gitEntry.isDirectory() || gitEntry.isFile()
+      } catch {
+        return false
+      }
+    }
+    const level2 = []
+    for (const dirent of level1) {
+      if (!dirent.isDirectory()) continue
+      const dirAbs = join(root, dirent.name)
+      if (await hasGit(dirAbs)) repos.push({ name: dirent.name, rel: dirent.name, path: dirAbs })
+      let children
+      try {
+        children = await readdir(dirAbs, { withFileTypes: true })
+      } catch {
+        continue
+      }
+      for (const child of children) {
+        if (!child.isDirectory()) continue
+        level2.push({ dirAbs: join(dirAbs, child.name), rel: `${dirent.name}/${child.name}` })
+      }
+    }
+    await Promise.all(level2.map(async ({ dirAbs, rel }) => {
+      if (await hasGit(dirAbs)) repos.push({ name: rel.split('/').pop(), rel, path: dirAbs })
+    }))
+    return repos
+  })()
+  repoDiscoveryInFlight.set(key, value)
+  try {
+    const resolved = await value
+    repoDiscoveryCache.set(key, { expires: now() + GIT_CACHE_TTL_MS, value: resolved })
+    return resolved
+  } finally {
+    repoDiscoveryInFlight.delete(key)
   }
 }
 
@@ -634,6 +751,7 @@ export const __internals = {
   AtSiderError,
   attachGitState,
   compareEntries,
+  discoverRepos,
   gitState,
   handleSearchRequest,
   kindOfDirent,

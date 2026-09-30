@@ -744,6 +744,56 @@ describe('rendering the tree', () => {
       'a directory carries no dot')
   })
 
+  it('offers a repository selector when several repos are discovered (R40a)', async () => {
+    const multiFetch = async (url, init) => {
+      const response = await ROW_FETCH(url, init)
+      const payload = await response.json()
+      if (payload.ok && payload.value.git?.available === true) {
+        payload.value.git.repos = [
+          { name: 'ws', rel: '' },
+          { name: 'sub-repo', rel: 'sub-repo' },
+        ]
+        payload.value.git.selected = ''
+      }
+      return jsonResponse(payload)
+    }
+    const harness = loadPlugin({ fetchImpl: multiFetch })
+    harness.plugin.apply(fakeCtx().ctx)
+    const { plugin, react, calls } = harness
+    const props = {
+      sessionId: 's-1',
+      useSessions: (selector) => selector({ byId: { 's-1': { cwd: ROOT } } }),
+      useTabInfo: () => ({
+        tab: {
+          id: 'tab-1',
+          title: 'Files',
+          signal: new AbortController().signal,
+          actions: { bindCommands: () => () => {}, openResource: () => {} },
+        },
+      }),
+      t: (key) => key,
+    }
+    let pass = react.render(plugin.__internals.components.FilesBody, props)
+    pass.runEffects()
+    await new Promise((done) => setTimeout(done, 0))
+    pass = react.render(plugin.__internals.components.FilesBody, props)
+
+    // Two repos → the selector renders with one option per repo.
+    const select = collect(pass.tree, (node) => node.props?.['data-at-sider-git-select'] !== undefined)[0]
+    assert.ok(select, 'two discovered repositories render the selector')
+    assert.deepEqual(select.children.map((option) => option.props.value), ['', 'sub-repo'])
+
+    // Picking one rides the next listing request, which refetches the levels.
+    select.children[1].props.selected = 'sub-repo'
+    select.props.onChange({ target: { value: 'sub-repo' } })
+    pass = react.render(plugin.__internals.components.FilesBody, props)
+    pass.runEffects()
+    await new Promise((done) => setTimeout(done, 0))
+    const bodies = calls.map((call) => JSON.parse(call.init.body))
+    assert.ok(bodies.some((body) => body.gitRepo === 'sub-repo'),
+      'the selection rides the refetched listing requests')
+  })
+
   it('renders no git elements when the workspace is outside a repository', async () => {
     const noGitFetch = async (url, init) => {
       const response = await ROW_FETCH(url, init)

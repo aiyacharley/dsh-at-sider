@@ -8,10 +8,14 @@
   the branch, ahead/behind, the HEAD commit's short hash, subject, and relative
   age (full hash, author, and time on hover). **Clicking the bar expands the
   commit list upward** — the last 20 commits, oldest at the top and the newest
-  at the bottom with a HEAD marker. Outside a repository, or without a git
-  executable, nothing renders. The state rides the existing listing route:
+  at the bottom with a HEAD marker. **Multi-repository workspaces**: when the
+  workspace itself is not a repository but its first/second-level
+  subdirectories are, the bar gains a repository selector, and the picked
+  repository drives the branch/commit info and the per-file dots (the request's
+  `gitRepo` field re-anchors every level). Outside a repository, or without a
+  git executable, nothing renders. The state rides the existing listing route:
   one bounded `git status --porcelain=v1 -z --branch` (+ `rev-parse`,
-  `git log -1`, and `git log -n 20`) per workspace root, cached 30 s with
+  `git log -1`, and `git log -n 20`) per repository, cached 30 s with
   in-flight deduplication, a 3 s timeout and a 1 MB output cap; a workspace that
   is a subdirectory of its repository maps status paths through `--show-prefix`.
 - Investigation recorded (ROADMAP §2.4): the in-box `dsh-workspace-changes`
