@@ -267,11 +267,15 @@ export async function handleListRequest(request, deps) {
     try {
       const gitDeps = typeof deps.runGit === 'function' ? { runGit: deps.runGit } : {}
       const repos = await discoverRepos(root, gitDeps)
-      const selected = repos.length === 0
+      const valid = repos.filter((repo) => repo.valid === true)
+      const selected = valid.length === 0
         ? undefined
-        : (repos.find((repo) => repo.rel === gitRepo) ?? repos[0])
+        : (valid.find((repo) => repo.rel === gitRepo) ?? valid[0])
       if (selected === undefined) {
-        value.git = { available: false }
+        // Repositories were discovered but none is usable (or none exist):
+        // keep the discovery rows so the Client can still show the selector
+        // with an explanation instead of the whole bar vanishing.
+        value.git = { available: false, repos, selected: undefined }
       } else {
         const state = await gitState(selected.enclosing === true ? root : selected.path, gitDeps)
         attachGitState(value, state, { repoRel: selected.enclosing === true ? '' : selected.rel, repos, selectedRel: selected.rel })
@@ -553,16 +557,19 @@ export async function discoverRepos(root, deps = {}) {
         const rootResolved = toSlash(resolve(root))
         const topResolved = toSlash(resolve(top))
         if (rootResolved.toLowerCase() === topResolved.toLowerCase()) {
-          return [{ name: basename(root), rel: '', path: resolve(root) }]
+          return [{ name: basename(root), rel: '', path: resolve(root), valid: true }]
         }
         const inner = toSlash(relative(topResolved, rootResolved))
         if (inner !== '' && !inner.startsWith('..')) {
-          return [{ name: basename(topResolved), rel: '', path: resolve(top), enclosing: true }]
+          return [{ name: basename(topResolved), rel: '', path: resolve(top), enclosing: true, valid: true }]
         }
       }
     }
     // The workspace is outside any repository: scan its first two directory
-    // levels for `.git` entries.
+    // levels for `.git` entries. A `.git` that exists but is not a working
+    // repository (broken or emptied — no HEAD, say) is still listed, but marked
+    // invalid so the selector can show it as unusable instead of the whole bar
+    // silently disappearing once selected.
     const repos = []
     let level1
     try {
@@ -596,6 +603,10 @@ export async function discoverRepos(root, deps = {}) {
     }
     await Promise.all(level2.map(async ({ dirAbs, rel }) => {
       if (await hasGit(dirAbs)) repos.push({ name: rel.split('/').pop(), rel, path: dirAbs })
+    }))
+    await Promise.all(repos.map(async (repo) => {
+      const check = await run(['rev-parse', '--show-toplevel'], repo.path)
+      repo.valid = check.code === 0
     }))
     return repos
   })()

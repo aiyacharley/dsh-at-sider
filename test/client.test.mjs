@@ -744,14 +744,68 @@ describe('rendering the tree', () => {
       'a directory carries no dot')
   })
 
+  it('keeps the bottom bar with a note when a discovered repository is invalid (R40a)', async () => {
+    const invalidFetch = async (url, init) => {
+      const response = await ROW_FETCH(url, init)
+      const payload = await response.json()
+      if (payload.ok && payload.value.git?.available === true) {
+        payload.value.git = {
+          available: false,
+          repos: [
+            { name: 'good-repo', rel: 'good-repo', valid: true },
+            { name: 'broken-repo', rel: 'broken-repo', valid: false },
+          ],
+          selected: undefined,
+        }
+      }
+      return jsonResponse(payload)
+    }
+    const harness = loadPlugin({ fetchImpl: invalidFetch })
+    harness.plugin.apply(fakeCtx().ctx)
+    const { plugin, react } = harness
+    const props = {
+      sessionId: 's-1',
+      useSessions: (selector) => selector({ byId: { 's-1': { cwd: ROOT } } }),
+      useTabInfo: () => ({
+        tab: {
+          id: 'tab-1',
+          title: 'Files',
+          signal: new AbortController().signal,
+          actions: { bindCommands: () => () => {}, openResource: () => {} },
+        },
+      }),
+      t: (key, params) => {
+        const dict = plugin.__internals.dictionaries.zh
+        const template = dict[key] ?? key
+        return params === undefined ? template : Object.entries(params).reduce((acc, [name, value]) => acc.replace(`{${name}}`, String(value)), template)
+      },
+    }
+    let pass = react.render(plugin.__internals.components.FilesBody, props)
+    pass.runEffects()
+    await new Promise((done) => setTimeout(done, 0))
+    pass = react.render(plugin.__internals.components.FilesBody, props)
+
+    // The bar stays (no silent vanish), shows the explanation, and the invalid
+    // repository is a disabled option.
+    assert.equal(collect(pass.tree, (node) => node.props?.['data-at-sider-git-invalid'] !== undefined).length, 1,
+      'the bar explains why there is no git info')
+    assert.equal(collect(pass.tree, (node) => node.props?.['data-at-sider-git'] === 'head').length, 0,
+      'no toggle without a usable repository')
+    const select = collect(pass.tree, (node) => node.props?.['data-at-sider-git-select'] !== undefined)[0]
+    assert.ok(select)
+    const broken = select.children.find((option) => option.props.value === '')
+    assert.equal(broken.props.disabled, true, 'the invalid repository cannot be selected')
+    assert.match(textOf([broken]), /不是有效的 Git 仓库/)
+  })
+
   it('offers a repository selector when several repos are discovered (R40a)', async () => {
     const multiFetch = async (url, init) => {
       const response = await ROW_FETCH(url, init)
       const payload = await response.json()
       if (payload.ok && payload.value.git?.available === true) {
         payload.value.git.repos = [
-          { name: 'ws', rel: '' },
-          { name: 'sub-repo', rel: 'sub-repo' },
+          { name: 'ws', rel: '', valid: true },
+          { name: 'sub-repo', rel: 'sub-repo', valid: true },
         ]
         payload.value.git.selected = ''
       }

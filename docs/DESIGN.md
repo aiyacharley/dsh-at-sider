@@ -251,11 +251,15 @@ itself: the Host discovers repositories at the workspace root (or the repository
 that encloses it), plus every first- and second-level subdirectory holding a
 `.git` entry (a directory, or a file for worktrees/submodules). Discovery is
 filesystem-only — one `git rev-parse` probe for the enclosing repository, then
-two bounded directory levels — and cached like the git state. When more than one
-repository is found, the bar gains a **repository selector**; the picked
-repository's rel rides the next listing requests (`gitRepo`), and the Host
-re-anchors branch, commits, and per-file dots to it. Files outside the selected
-repository carry no dot.
+two bounded directory levels — and each candidate is validated with a bounded
+`git rev-parse` before it counts as usable: a discovered `.git` that is broken
+(no HEAD, as observed on a real workspace) is reported with `valid: false`. The
+results are cached like the git state. When more than one usable repository is
+found, the bar gains a **repository selector**; the picked repository's rel
+rides the next listing requests (`gitRepo`), and the Host re-anchors branch,
+commits, and per-file dots to it. Files outside the selected repository carry
+no dot, and an unusable repository never makes the bar vanish: the selector
+shows it disabled and the bar explains itself.
 
 The in-box `dsh-workspace-changes` plugin was evaluated first and rejected for
 this job: it records **per-turn snapshot diffs** ("what did this turn change",

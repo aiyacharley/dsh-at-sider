@@ -536,7 +536,8 @@ describe('git state (R40a)', () => {
           body: JSON.stringify({ sessionId: 's1', path: bare }),
         }), { getSessionRoot: () => bare })
         const payload = await response.json()
-        assert.deepEqual(payload.value.git, { available: false })
+        assert.equal(payload.value.git.available, false)
+        assert.equal(payload.value.git.repos.length, 0)
         assert.ok(payload.value.entries.every((entry) => entry.git === undefined))
       } finally {
         await rm(bare, { recursive: true, force: true })
@@ -598,6 +599,28 @@ describe('git state (R40a)', () => {
       const repos = await __internals.discoverRepos(ws, { now: () => Date.now() })
       assert.deepEqual(repos.map((repo) => repo.rel).sort(), ['alpha', 'tools/beta'],
         'level-1 and level-2 repositories are discovered; level-3 is not')
+      await rm(base, { recursive: true, force: true })
+    })
+
+    it('marks a discovered but broken .git as invalid and keeps the selector honest', async () => {
+      const base = await mkdtemp(join(tmpdir(), 'dsh-at-sider-brokengit-'))
+      const ws = join(base, 'ws')
+      await mkdir(join(ws, 'broken', '.git'), { recursive: true })
+      await writeFile(join(ws, 'note.txt'), 'plain file')
+      const repos = await __internals.discoverRepos(ws, { now: () => Date.now() })
+      assert.deepEqual(repos.map((repo) => [repo.rel, repo.valid]), [['broken', false]],
+        'a .git without HEAD is discovered but invalid')
+
+      const response = await handleListRequest(new Request(`http://127.0.0.1${ROUTE_PATH}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sessionId: 's1', path: ws }),
+      }), { getSessionRoot: () => ws })
+      const payload = await response.json()
+      assert.equal(payload.value.git.available, false)
+      assert.equal(payload.value.git.repos.length, 1)
+      assert.equal(payload.value.git.repos[0].valid, false)
+      assert.equal(payload.value.git.selected, undefined)
       await rm(base, { recursive: true, force: true })
     })
 

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Fix: **a selected repository that turns out to be invalid no longer makes the
+  git bar vanish silently.** Discovery validates each candidate with a bounded
+  `git rev-parse`; an unusable repository (for example a `.git` directory
+  missing its HEAD, as seen on a real workspace) is listed in the selector as a
+  disabled option and the bar explains 「不是有效的 Git 仓库」 instead of
+  disappearing.
 - Feature: **git state on rows and the bottom bar (R40a)** — files that are
   untracked, modified (unstaged), or staged get a coloured dot right after the
   name (with a naming tooltip), and a **bottom bar** pinned under the tree shows
