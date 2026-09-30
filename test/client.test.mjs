@@ -589,9 +589,16 @@ describe('rendering the tree', () => {
         path: ROOT,
         root: ROOT,
         truncated: false,
+        git: {
+          available: true,
+          branch: 'main',
+          ahead: 1,
+          behind: 0,
+          head: { hash: 'a1b2c3d', subject: 'feat: something', author: 'tester', time: 1735700645000 },
+        },
         entries: [
           { name: 'src', type: 'directory', mtimeMs: 1735787045000 },
-          { name: 'README.md', type: 'file', mtimeMs: 1735700645000, size: 12 },
+          { name: 'README.md', type: 'file', mtimeMs: 1735700645000, size: 12, git: 'unstaged' },
           { name: 'pipe', type: 'other' },
         ],
       },
@@ -679,6 +686,67 @@ describe('rendering the tree', () => {
     assert.deepEqual(refs.map((ref) => ref.props['data-at-sider-ref']), [`${ROOT}/src`, `${ROOT}/README.md`])
     // The affordance reads as a labelled reference, not a bare glyph.
     assert.deepEqual(refs.map((ref) => textOf(ref.children)), ['@文件夹', '@文件'])
+  })
+
+  it('shows the git state dot on files and the git line under the header (R40a)', async () => {
+    const { tree, plugin } = await renderBody()
+    // R40a: the header's git line — branch, sync counts, commit summary, relative age.
+    const gitline = collect(tree, (node) => node.props?.['data-at-sider-git'] === 'head')[0]
+    assert.ok(gitline, 'the git line renders when the workspace answered with a repository')
+    const branch = collect([gitline], (node) => node.props?.className === 'ats-gitBranch')[0]
+    assert.match(textOf([branch]), /main/)
+    const commit = collect([gitline], (node) => node.props?.className === 'ats-gitCommit')[0]
+    assert.match(textOf([commit]), /a1b2c3d feat: something/)
+    const sync = collect([gitline], (node) => node.props?.className === 'ats-gitSync')[0]
+    assert.match(textOf([sync]), /↑1/)
+    const time = collect([gitline], (node) => node.props?.className === 'ats-gitTime')[0]
+    assert.ok(textOf([time]).length > 0, 'the commit age is rendered')
+    assert.match(gitline.props.title, /a1b2c3d/, 'the full tooltip carries hash, author, and time')
+
+    // The file's dot: class + tooltip; a directory and an 'other' entry have none.
+    const dots = collect(tree, (node) => node.props?.['data-at-sider-git'] !== undefined
+      && node.props?.['data-at-sider-git'] !== 'head')
+    assert.equal(dots.length, 1)
+    assert.equal(dots[0].props['data-at-sider-git'], 'unstaged')
+    assert.equal(dots[0].props.title, '有未暂存的修改')
+    assert.match(dots[0].props.className, /ats-gitDot ats-gitUnstaged/)
+    const srcRow = collect(tree, (node) => node.props?.['data-at-sider-path'] === `${ROOT}/src`)[0]
+    assert.equal(collect([srcRow], (node) => node.props?.['data-at-sider-git'] !== undefined).length, 0,
+      'a directory carries no dot')
+  })
+
+  it('renders no git elements when the workspace is outside a repository', async () => {
+    const noGitFetch = async (url, init) => {
+      const response = await ROW_FETCH(url, init)
+      const payload = await response.json()
+      if (payload.ok && payload.value.git !== undefined) payload.value.git = { available: false }
+      if (payload.ok && Array.isArray(payload.value.entries)) {
+        for (const entry of payload.value.entries) delete entry.git
+      }
+      return jsonResponse(payload)
+    }
+    const harness = loadPlugin({ fetchImpl: noGitFetch })
+    harness.plugin.apply(fakeCtx().ctx)
+    const { plugin, react } = harness
+    const props = {
+      sessionId: 's-1',
+      useSessions: (selector) => selector({ byId: { 's-1': { cwd: ROOT } } }),
+      useTabInfo: () => ({
+        tab: {
+          id: 'tab-1',
+          title: 'Files',
+          signal: new AbortController().signal,
+          actions: { bindCommands: () => () => {}, openResource: () => {} },
+        },
+      }),
+      t: (key) => key,
+    }
+    let pass = react.render(plugin.__internals.components.FilesBody, props)
+    pass.runEffects()
+    await new Promise((done) => setTimeout(done, 0))
+    pass = react.render(plugin.__internals.components.FilesBody, props)
+    assert.equal(collect(pass.tree, (node) => node.props?.['data-at-sider-git'] !== undefined).length, 0,
+      'neither the header line nor any dot renders outside a repository')
   })
 
   it('opens a file through the tab and refuses nothing twice', async () => {

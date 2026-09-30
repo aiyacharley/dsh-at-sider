@@ -205,7 +205,7 @@ rendered rows exactly (`chainOf` normalizes for comparison but constructs keys i
 the tree's own form, which matters on Windows where the session's `cwd` spelling
 is what every key starts with). The row is then scrolled into view and flashed
 through a `data-at-sider-treeitem` hook on the **row** — not its `li` — using the
-same outline as the keyboard focus ring (§8); the class is re-asserted during the
+same outline as the keyboard focus ring (§9); the class is re-asserted during the
 flash window because a React re-render of that row would otherwise drop the
 manually added class. The seek retries for a few seconds, because the target row
 does not exist until the levels above it have been read.
@@ -233,7 +233,40 @@ tree's affordances: the `@` chip inserts a reference, clicking a file opens it,
 and clicking a directory clears the filter *and* expands the tree down to that
 directory.
 
-## 8. Keyboard navigation and accessibility
+## 8. Git state on rows and the header
+
+The tree can say which files differ from the repository: untracked, modified
+(unstaged), and staged files each get a coloured dot right after the name, and
+the header gains a git line — `⎇ branch ↑ahead ↓behind · short-hash subject
+(relative age)` — whose tooltip carries the full hash, the author, and the
+absolute time. Everything degrades to nothing: outside a repository, or without
+a git executable, the response says `available: false` and neither the dots nor
+the line render.
+
+The in-box `dsh-workspace-changes` plugin was evaluated first and rejected for
+this job: it records **per-turn snapshot diffs** ("what did this turn change",
+turn-start vs turn-end numstat), which is a different question from the current
+work-tree state (it has no staged/unstaged/untracked semantics), and its records
+live only as long as the Session. Its `GitRunner` shape — a subprocess with a
+timeout, an output cap, and a scrubed environment, resolving every failure into
+facts rather than exceptions — is what this plugin's own bounded runner mirrors.
+
+Mechanics:
+
+- one `git status --porcelain=v1 -z --branch` per workspace root gives every
+  file's state plus the branch and ahead/behind counts; `git rev-parse
+  --show-toplevel --show-prefix` locates the repository and, when the workspace
+  root is a subdirectory of it, provides the prefix that maps repository-relative
+  status paths onto the workspace's entries; `git log -1` provides the HEAD.
+- the three commands run with a 3 s timeout and a 1 MB stdout cap, are cached
+  per root for 30 s with in-flight deduplication, and ride the **existing**
+  listing route's response — no new route, no new auth surface;
+- only `file` entries are annotated (directories never carry a dot); a clean
+  file carries no field at all, so the payload stays small;
+- a parse or run failure never fails the listing: the response degrades to
+  `available: false`.
+
+## 9. Keyboard navigation and accessibility
 
 The rows are a real ARIA tree rather than a list with key handlers added: the
 root is `role="tree"`, rows are `role="treeitem"` with `aria-level` and
@@ -258,7 +291,7 @@ reuses it deliberately: one visual language for "this row is active". The search
 result count is announced through a polite live region, and the result list is a
 `listbox` whose rows are `option`s.
 
-## 9. Deliberate deviations from the native body
+## 10. Deliberate deviations from the native body
 
 | Aspect | Native | Here | Why |
 |---|---|---|---|
@@ -299,7 +332,7 @@ tree. The bend is bounded:
 The `data-at-sider-*` hooks let a test assert both paths (host artwork present /
 absent), which is what keeps the fallback from rotting.
 
-## 10. What a Harness upgrade can break
+## 11. What a Harness upgrade can break
 
 Everything the Client half mirrors is listed here so a future failure is easy to
 place:
@@ -316,17 +349,22 @@ place:
 | `conversation.input.for(scope).addFiles` | falls back to copying |
 | `remote.$stream` + `remote.workspaceFiles.changes` | auto-refresh becomes a no-op; the reload button still works |
 | the primitives exports `FileTypeIcon` / `classifyFileType` / `IconFolder*Regular` / `GuideArtworkFiles` | the inline fallback glyphs render instead (icons only) |
+| the `git` executable or the repository state | `available: false` — no dots, no header line; the tree itself is unaffected |
 | this plugin's own `/api` routes | unaffected |
 
-## 11. Verification performed
+## 12. Verification performed
 
-- `node --test test/host.test.mjs test/client.test.mjs` — **66 tests**: containment
+- `node --test test/host.test.mjs test/client.test.mjs` — **78 tests**: containment
   (including the sibling-prefix and `..` cases), per-entry `mtimeMs`, truncation,
   failure-code mapping, bounded concurrency; the listing route's request/response
   contract; `apply()` registering **two** authenticated POST routes and staying
   inert without Connection or the session registry; the cold-session fallback;
   the search walk (skip list, result cap, depth cap, blank query, route end to
-  end, `no-workspace`); the artifact's loader registration; the takeover
+  end, `no-workspace`); the git state (porcelain parsing with renames and
+  spaced paths, branch/ahead/behind, no-commits-yet, the no-git degradation,
+  the per-root cache with in-flight dedup, and a **real repository end to end**
+  through the listing route, including a workspace nested inside a repository);
+  the artifact's loader registration; the takeover
   definition and its runtime toggle; menu-entry visibility and the reference the
   `@` entry inserts; mention grammar; resource addresses and their parser;
   listing transport failures; composer insertion and the clipboard fallback; the
@@ -334,7 +372,8 @@ place:
   size formatting, width tiers, sort comparators, the header sort cycle with its
   persistence, and the tier CSS; the quick filter (debounce, result list, chip,
   clearing) and reveal expansion; the expansion memory across an unmount/
-  remount; tree semantics (`role` / `aria-level` /
+  remount; the git dot and the header's git line with their no-git degradation;
+  tree semantics (`role` / `aria-level` /
   `aria-expanded`) and the keyboard-navigation branches; and a rendered-tree
   smoke test through a minimal React shim (rows, dates, `@` buttons, a directory
   click, a failure line, the no-workspace state, and both click paths).

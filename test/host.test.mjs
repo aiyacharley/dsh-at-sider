@@ -6,6 +6,7 @@
  */
 import { after, before, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -390,5 +391,185 @@ describe('searchWorkspace (R15)', () => {
     const payload = await response.json()
     assert.equal(payload.ok, false)
     assert.equal(payload.error.code, 'no-workspace')
+  })
+})
+
+describe('git state (R40a)', () => {
+  const { parseStatus, gitState, attachGitState } = __internals
+  /** Run git in `cwd`; throws with stderr on failure so fixture bugs are loud. */
+  const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8' })
+
+  describe('parseStatus', () => {
+    it('parses the branch line, ahead/behind, and the three work-tree states', () => {
+      const stdout = [
+        '## main...origin/main [ahead 2, behind 1]',
+        ' M unstaged.txt',
+        'M  staged.txt',
+        '?? untracked.txt',
+        'MM both.txt',
+        '',
+      ].join('\0')
+      const parsed = parseStatus(stdout)
+      assert.equal(parsed.branch, 'main')
+      assert.equal(parsed.ahead, 2)
+      assert.equal(parsed.behind, 1)
+      assert.equal(parsed.files.get('unstaged.txt'), 'unstaged')
+      assert.equal(parsed.files.get('staged.txt'), 'staged')
+      assert.equal(parsed.files.get('untracked.txt'), 'untracked')
+      assert.equal(parsed.files.get('both.txt'), 'staged', 'staged wins when a file is both')
+    })
+
+    it('consumes a rename record second path and keeps paths with spaces', () => {
+      const stdout = [
+        '## main',
+        'R  renamed with space.txt',
+        'a dir/old name.txt',
+        '',
+      ].join('\0')
+      const parsed = parseStatus(stdout)
+      assert.equal(parsed.branch, 'main')
+      assert.equal(parsed.ahead, 0)
+      assert.ok(parsed.files.has('renamed with space.txt'))
+      assert.equal(parsed.files.get('renamed with space.txt'), 'staged')
+      assert.equal(parsed.files.size, 1, 'the original-path record is consumed, not parsed as a status')
+    })
+
+    it('parses a repository with no commits yet', () => {
+      const parsed = parseStatus(['## No commits yet on main', '?? a.txt', ''].join('\0'))
+      assert.equal(parsed.branch, 'main')
+      assert.equal(parsed.files.get('a.txt'), 'untracked')
+    })
+  })
+
+  describe('gitState', () => {
+    it('assembles branch, ahead/behind, head, and the status map from a working repository', async () => {
+      const base = await mkdtemp(join(tmpdir(), 'dsh-at-sider-git-'))
+      const ws = join(base, 'ws')
+      await mkdir(ws, { recursive: true })
+      git(ws, 'init', '-b', 'main')
+      git(ws, '-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '--allow-empty', '-m', 'first commit')
+      await writeFile(join(ws, 'clean.txt'), 'committed')
+      git(ws, 'add', '.')
+      git(ws, '-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-m', 'add clean.txt')
+      await writeFile(join(ws, 'dirty.txt'), 'changed')
+
+      const state = await gitState(ws, { now: () => Date.now() })
+      assert.equal(state.available, true)
+      assert.equal(state.branch, 'main')
+      assert.equal(state.status.get('dirty.txt'), 'untracked')
+      assert.equal(state.status.get('clean.txt'), undefined, 'a committed, unchanged file carries no state')
+      assert.ok(state.head.subject.includes('add clean.txt'))
+      assert.ok(state.head.hash.length >= 7)
+      await rm(base, { recursive: true, force: true })
+    })
+
+    it('degrades to available:false outside a repository', async () => {
+      const base = await mkdtemp(join(tmpdir(), 'dsh-at-sider-nogit-'))
+      await mkdir(base, { recursive: true })
+      const state = await gitState(base, { now: () => Date.now() })
+      assert.deepEqual(state, { available: false })
+      await rm(base, { recursive: true, force: true })
+    })
+
+    it('caches per cwd within the TTL and collapses concurrent reads', async () => {
+      let runs = 0
+      const runner = async () => {
+        runs += 1
+        return { code: 128, stdout: '', truncated: false }
+      }
+      await gitState('X:/cached-a', { runGit: runner, now: () => Date.now() })
+      await gitState('X:/cached-a', { runGit: runner, now: () => Date.now() })
+      await Promise.all([gitState('X:/cached-b', { runGit: runner, now: () => Date.now() }), gitState('X:/cached-b', { runGit: runner, now: () => Date.now() })])
+      assert.equal(runs, 2, 'one run per cwd: the second read hits the cache, the concurrent pair collapses')
+    })
+  })
+
+  describe('listing integration', () => {
+    /** @type {string} */
+    let ws
+
+    before(async () => {
+      ws = join(await mkdtemp(join(tmpdir(), 'dsh-at-sider-gitroute-')), 'ws')
+      await mkdir(ws, { recursive: true })
+      git(ws, 'init', '-b', 'main')
+      await writeFile(join(ws, 'clean.txt'), 'committed')
+      await writeFile(join(ws, 'dirty.txt'), 'will be modified')
+      git(ws, 'add', '.')
+      git(ws, '-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-m', 'initial: clean and dirty')
+      await writeFile(join(ws, 'dirty.txt'), 'now modified')
+      await writeFile(join(ws, 'untracked.txt'), 'brand new')
+    })
+
+    after(async () => {
+      await rm(dirnameOf(ws), { recursive: true, force: true })
+    })
+
+    it('attaches the git block and per-file fields to the listing response', async () => {
+      const response = await handleListRequest(new Request(`http://127.0.0.1${ROUTE_PATH}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sessionId: 's1', path: ws }),
+      }), { getSessionRoot: () => ws })
+      const payload = await response.json()
+      assert.equal(payload.ok, true)
+      assert.equal(payload.value.git.available, true)
+      assert.equal(payload.value.git.branch, 'main')
+      assert.ok(payload.value.git.head.subject.startsWith('initial:'))
+      const byName = new Map(payload.value.entries.map((entry) => [entry.name, entry]))
+      assert.equal(byName.get('dirty.txt').git, 'unstaged')
+      assert.equal(byName.get('untracked.txt').git, 'untracked')
+      assert.equal(byName.get('clean.txt').git, undefined, 'a clean file carries no git field')
+      assert.equal(byName.get('clean.txt').type, 'file')
+    })
+
+    it('attaches available:false outside a repository and colors nothing', async () => {
+      const bare = await mkdtemp(join(tmpdir(), 'dsh-at-sider-bare-'))
+      try {
+        await writeFile(join(bare, 'x.txt'), 'plain')
+        const response = await handleListRequest(new Request(`http://127.0.0.1${ROUTE_PATH}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ sessionId: 's1', path: bare }),
+        }), { getSessionRoot: () => bare })
+        const payload = await response.json()
+        assert.deepEqual(payload.value.git, { available: false })
+        assert.ok(payload.value.entries.every((entry) => entry.git === undefined))
+      } finally {
+        await rm(bare, { recursive: true, force: true })
+      }
+    })
+
+    it('maps entries of a workspace nested inside a repository via --show-prefix', async () => {
+      // The workspace root is a subdirectory of the repository: the status map
+      // is repository-relative, so the prefix must bridge the two.
+      const base = await mkdtemp(join(tmpdir(), 'dsh-at-sider-nested-'))
+      const repo = join(base, 'repo')
+      const nested = join(repo, 'packages', 'app')
+      await mkdir(nested, { recursive: true })
+      git(repo, 'init', '-b', 'main')
+      await writeFile(join(nested, 'inner.txt'), 'nested content')
+      git(repo, 'add', '.')
+      git(repo, '-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-m', 'nested initial')
+      await writeFile(join(nested, 'inner.txt'), 'nested modified')
+
+      const response = await handleListRequest(new Request(`http://127.0.0.1${ROUTE_PATH}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sessionId: 's1', path: nested }),
+      }), { getSessionRoot: () => nested })
+      const payload = await response.json()
+      assert.equal(payload.value.git.available, true)
+      assert.equal(payload.value.entries.find((entry) => entry.name === 'inner.txt')?.git, 'unstaged',
+        'the repo-relative status maps through the workspace prefix')
+      await rm(base, { recursive: true, force: true })
+    })
+  })
+
+  it('attachGitState tolerates an empty status map and missing head', () => {
+    const value = { path: 'C:/ws', root: 'C:/ws', entries: [{ name: 'a.txt', type: 'file' }] }
+    attachGitState(value, { available: true, branch: 'main', ahead: 0, behind: 0, head: undefined, status: new Map(), prefix: '' })
+    assert.equal(value.git.available, true)
+    assert.equal(value.git.head, undefined)
+    assert.equal(value.entries[0].git, undefined)
   })
 })

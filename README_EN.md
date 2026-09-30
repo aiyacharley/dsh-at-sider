@@ -83,6 +83,7 @@ press `Mod+P`). Three checks:
 | reveal in file tree (R16) | **Right-click a file-preview tab** → "Reveal in file tree": focuses the tree, expands the ancestor directories, scrolls to the row and briefly highlights it (same outline as the keyboard focus ring). |
 | one-click `@file` from a preview (R16) | **Right-click a file-preview tab** → "@file": inserts the previewed file's reference straight into the composer — exactly what the row's `@` chip does, without going back to the tree to find that row. |
 | where the entries appear | Both entries are offered only in the right-click menu of **file-preview tabs** — not on the Files tab or other tabs. Harness tabs have no ⋯ button, so the entry point is the right-click menu. |
+| git state on rows (R40a) | A **coloured dot** after a file's name marks its work-tree state: untracked (green) / modified, unstaged (amber) / staged (blue), with a naming tooltip. Below the header a **git line** shows `⎇ branch ↑ahead ↓behind · commit summary (relative age)`, with the full hash, author, and time on hover. Outside a repository — or without a git executable — nothing renders; the state is read with the listing and cached for 30 s. |
 | icons | The host's own artwork, unchanged: `FileTypeIcon` + `classifyFileType` (category-coloured per file kind), the line-art folder icons, and `GuideArtworkFiles` for the guide capsule — the very components the native tree draws with. Inline glyphs take over only if those exports are unavailable. |
 | header | Workspace root path (full path on hover), an auto-refresh toggle, and a reload button. |
 | rows | Directories first, then natural case-insensitive name order — the native tree's own ordering. |
@@ -195,6 +196,11 @@ alternative that was evaluated and rejected.
   is not kept is the **level data** (a returning level is refetched) and
   anything across a **page reload** — the full slot-store migration is
   ROADMAP R30.
+- Git state comes from `git status`/`git log` subprocesses in the Host half
+  (30 s cache, in-flight deduplication, timeout and output caps); outside a
+  git repository nothing renders. A workspace that is a **subdirectory** of its
+  repository maps status paths through `--show-prefix`; rename records count as
+  their new path.
 - Modification times and the search both come from `node:fs` (the `ctx.fs` seam
   exposes no time field), so both routes carry their own workspace containment.
 - The Client half mirrors a few private details of the native tree (row ordering,
@@ -273,7 +279,7 @@ Restart DSH for the change to take effect.
 ## Development and tests
 
 ```bash
-npm test          # node --test, 66 cases, fully offline (no network, no browser)
+npm test          # node --test, 78 cases, fully offline (no network, no browser; git cases use a real git)
 ```
 
 - This plugin has **no dependencies and no build step**: `client.js` is the final

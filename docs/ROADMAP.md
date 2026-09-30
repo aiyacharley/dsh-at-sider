@@ -28,12 +28,12 @@
 | R3 | **自动刷新 + 页头**：复用原生 `workspaceFiles.changes` 目录监听（不轮询）、重新读取按钮、自动刷新开关、根路径标签 | v0.0.1 | ✅ |
 | R4 | **入口保留**：引导页胶囊（order 10 + `workspace.files` 快捷键）、标签 chip 标题 | v0.0.1 | ✅ |
 | F1 | **修复时间列被裁切**：行原为 `content-box`，`width:100%` + 自身 padding 溢出 20px；改回 `border-box` | v0.0.2 | ✅ |
-| F2 | **图标恢复宿主原生**：`FileTypeIcon` + `classifyFileType`（按类型着色）、`IconFolder*Regular`、`GuideArtworkFiles`，运行时读取、`try`/`catch` + 导出形状校验，自带字形仅兜底（DESIGN §9"有界破例"） | v0.0.2 | ✅ |
+| F2 | **图标恢复宿主原生**：`FileTypeIcon` + `classifyFileType`（按类型着色）、`IconFolder*Regular`、`GuideArtworkFiles`，运行时读取、`try`/`catch` + 导出形状校验，自带字形仅兜底（DESIGN §10"有界破例"） | v0.0.2 | ✅ |
 | D1 | **README 结构对齐 dsh-pubmed**：中文主文档 + `README_EN.md` + npm/dsh-plugin.org badges + 完整安装步骤 | v0.0.2 | ✅ |
 
 ### 1.2 验证手段
 
-- **离线测试 66 用例（2 文件，零网络零浏览器）**：工作区包含性（`..`、同名前缀兄弟目录、NUL、缺根）；每层列表与 `mtimeMs`、截断、错误码映射、有界并发；路由请求/响应契约与 `apply()` 注册（缺 `connection`/`sessions` 保持惰性）；接管定义（kind/priority/guide）；mention 文法与 `dsh-resource://` 地址；composer 插入与剪贴板降级；按钮标签与闪现态；宿主图标路径与兜底路径双覆盖；行盒模型；整树渲染冒烟（行/日期/`@` 按钮/目录点击/失败行/无工作区态/两种点击路径）；大小格式化、宽度分层、排序比较器、页头排序循环与偏好持久化（v0.0.3）；冷会话兜底（live 优先/持久化回退/各残缺态）、整条路由冷会话可用、`no-workspace` 自愈重试与 2 次封顶（v0.0.4）；菜单可见性、运行时开关、搜索路由（跳过清单/上限/深度）、过滤 UI、reveal 展开、树语义、键盘导航、预览页签 `@文件` 与地址解析（v0.1.0）；**展开状态跨卸载/重挂载记忆（0.1.0 之后，测试 shim 升级为按组件实例保存 hooks）**。
+- **离线测试 78 用例（2 文件，零网络零浏览器；git 用例使用真实 git 可执行文件）**：工作区包含性（`..`、同名前缀兄弟目录、NUL、缺根）；每层列表与 `mtimeMs`、截断、错误码映射、有界并发；路由请求/响应契约与 `apply()` 注册（缺 `connection`/`sessions` 保持惰性）；接管定义（kind/priority/guide）；mention 文法与 `dsh-resource://` 地址；composer 插入与剪贴板降级；按钮标签与闪现态；宿主图标路径与兜底路径双覆盖；行盒模型；整树渲染冒烟（行/日期/`@` 按钮/目录点击/失败行/无工作区态/两种点击路径）；大小格式化、宽度分层、排序比较器、页头排序循环与偏好持久化（v0.0.3）；冷会话兜底（live 优先/持久化回退/各残缺态）、整条路由冷会话可用、`no-workspace` 自愈重试与 2 次封顶（v0.0.4）；菜单可见性、运行时开关、搜索路由（跳过清单/上限/深度）、过滤 UI、reveal 展开、树语义、键盘导航、预览页签 `@文件` 与地址解析（v0.1.0）；展开状态跨卸载/重挂载记忆（0.1.1，测试 shim 升级为按组件实例保存 hooks）；**git 状态：porcelain 解析（重命名/空格路径/无提交）、no-git 降级、per-root 缓存在途去重、真实仓库端到端（含仓库内子目录工作区的前缀映射）、行色点与页头 git 行（R40a，待发布）**。
 - **发布物端到端**：从 npm registry 装到临时目录 → `import('dsh-at-sider')` 校验 `apply`/`ROUTE_PATH`，并核对 `dsh.client`/`dsh.bundle.patch` 声明（v0.0.1/v0.0.2 均执行）。
 - **真机**：重启 `dsh web` 后目视确认（用户反馈驱动 §3.3 式 F 循环）。
 - **镜像**：`scripts/sync-mirror.mjs` 确认 npmmirror 可取。
@@ -111,7 +111,8 @@
 
 | 项 | 内容 | 前置调查 | 状态 |
 |---|---|---|---|
-| R40 **Git 状态着色** | 修改/未跟踪文件名变色或加点（视觉价值最高） | ① in-box `dsh-workspace-changes`（形状 `{path, added, deleted,…}`）与 deliverables 的 `/api/changes.summary` 是否可复用；② 否则 Host 半 `git status --porcelain` 子进程（缓存、子模块、性能） | ⏸️ 调查中 |
+| **R40a Git 状态着色 + 页头提交信息** | 文件行三态色点（未跟踪/未暂存/已暂存，目录不着色）；页头新增 git 行 `⎇ branch ↑a ↓b · hash subject（相对时间）`，悬停见完整 hash/作者/时间。**调查结论（2026-09-30）**：`dsh-workspace-changes` 不可复用——它是**回合级快照对比**（"本回合改了什么"，turn-start/turn-end numstat），不是当前工作树状态（无 staged/unstaged/untracked 语义），且记录仅随会话存活（Session disposed 即清零）；其 `GitRunner` 的界限形状（子进程 + 超时 + 输出上限 + 环境清洗）作为实现参照 | Host：`git status --porcelain=v1 -z --branch` + `rev-parse --show-toplevel/--show-prefix`（子目录工作区用前缀映射）+ `git log -1`，单次调用按 cwd 缓存（30s TTL + 在途去重 + 3s 超时/输出上限）；exit≠0 / 无 git → `available:false` **零元素降级**；结果挂进现有 list 路由（entry 级 `git` 字段 + 根级 `git` 块），不新增路由。client：行色点（仅 alias token + 字面量兜底）+ 页头 git 行。规模 ~1.25d | ✅ 方案 A 已实现（待发布） |
+| **R40b 按文件最后提交** | 行 tooltip 按需查询每文件最后提交（批量 `git log --name-only` 建索引或悬停单查 + 缓存），不做常显——仓库大时输出上限敏感 | Host 扩展（R40a 之上） | 缓议（R40a 之后的增量，~0.5–1d） |
 | R41 会话级记忆 | 展开状态/滚动位置按工作区持久化，重启恢复（原生没有，差异化） | 插件自有存储服务选型 | 缓议 |
 | R42 在此打开终端 | 目录行菜单"在此打开终端" | `dsh-api-terminal-controller` 的 openTab 参数 | 缓议 |
 | R43 拖拽行插引用 | 行拖入 composer 生成引用 | composer 对自定义 MIME 的处理（内置 drop 走 OS 文件，可能不可行；不可行即放弃） | 缓议 |
@@ -138,6 +139,7 @@
 | 左栏 per-row slot 先例 | `dsh-client-ui-workspace/lib/types/client/contract/slots.d.ts`（`sidebar.workspaces.session.row.action`） | 上游化论据（§4） |
 | 原生图标组件 | `@deepseek-ai/dsh-client-ui-primitives`（`FileTypeIcon`/`classifyFileType`/`IconFolder*Regular`/`GuideArtworkFiles`，浏览器模块表种子词） | F2（已落地）、"不自绘图标"红线 |
 | Host→Client 数据通道 | `dsh-client-connection` `fetch.register`（`/api` 鉴权栅栏）；社区先例 dsh-context 三条路由 | R2（已落地）、R15、R40 |
+| Git 界限运行参照 | `dsh-workspace-changes/lib/types/git.d.ts`（`GitRunner`：子进程 + 超时 + 输出上限 + 环境清洗）；**回合快照对比语义不可复用**（R40a 调查结论） | R40a |
 | 设置页模式 | dsh-context（SETTINGS_NAMESPACE + 设置 UI，本机已装） | R20/R21 |
 | git 状态数据 | `dsh-workspace-changes`（`WorkspaceChangedFile`）；deliverables 的 `/api/changes.summary`、`/api/changes.diff` | R40 |
 | `workspaceFiles` 无 mtime、`FsVersion` 内含 mtimeNs 但契约禁解析 | `dsh-api-workspace-files` types；`dsh-fs-local`（`versionOf`） | R2 的由来、上游化论据（§4） |
@@ -165,7 +167,7 @@
 - **隐藏点文件开关**（原 R14）——点文件与原生一致地直接显示（用户决策，2026-09）。
 - **写操作（重命名/删除/移动）**：原生服务明确"no mutation"，`ctx.fs` 词汇表亦无对应能力；绕过策略缝做写操作风险大于价值，且与"agent 是写者"的定位冲突。最多评估"新建文件"（`ctx.fs.writeText` 的 `createIfAbsent` 语义现成）。
 - **内嵌编辑器/预览**：文档预览 tab 已存在，不重复造轮子。
-- **自绘图标**：一律运行时读取宿主 artwork（DESIGN §9）；自带字形仅作宿主不可用时的兜底。
+- **自绘图标**：一律运行时读取宿主 artwork（DESIGN §10）；自带字形仅作宿主不可用时的兜底。
 - **TypeScript / 构建管线迁移**：零依赖纯 JS 免构建是 GitHub 直装与可审计的优势。
 - **非 web 平台专门适配**：`dsh.client.platform: "web"`；兜底字形保证其他 shell 不崩即可。
 - **替代 DESIGN.md 的详细设计**——本文只做总览与状态追踪。

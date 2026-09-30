@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+- Feature: **git state on rows and the header (R40a)** — files that are
+  untracked, modified (unstaged), or staged get a coloured dot right after the
+  name (with a naming tooltip), and the header gains a git line: branch,
+  ahead/behind, the HEAD commit's short hash, subject, and relative age (full
+  hash, author, and time on hover). Outside a repository, or without a git
+  executable, nothing renders. The state rides the existing listing route:
+  one bounded `git status --porcelain=v1 -z --branch` (+ `rev-parse` and
+  `git log -1`) per workspace root, cached 30 s with in-flight deduplication,
+  a 3 s timeout and a 1 MB output cap; a workspace that is a subdirectory of
+  its repository maps status paths through `--show-prefix`.
+- Investigation recorded (ROADMAP §2.4): the in-box `dsh-workspace-changes`
+  plugin is a per-turn snapshot diff and cannot serve the current work-tree
+  state; its `GitRunner` shape was adopted as the reference. Per-file last-commit
+  tooltips are split out as R40b (deferred).
+
 ## 0.1.1
 
 - Fix: **the tree's expansion now survives the preview round trip, like the

@@ -105,6 +105,15 @@ window.__ModuleLoader__.load({
 .ats-statusLine{color:var(--dsw-alias-label-secondary);font-size:var(--dsh-content-font-size-secondary,13px);margin:0;line-height:1.6}
 .ats-titleIcon{flex:none}
 .ats-srOnly{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.ats-gitDot{display:inline-block;width:6px;height:6px;border-radius:50%;margin-left:6px;flex:none;vertical-align:middle}
+.ats-gitUntracked{background:var(--dsw-alias-success,#3fb950)}
+.ats-gitUnstaged{background:var(--dsw-alias-warning,#d29922)}
+.ats-gitStaged{background:var(--dsw-alias-accent,#4c8dff)}
+.ats-gitline{box-sizing:border-box;border-bottom:.5px solid var(--dsw-alias-border-l3);flex:none;align-items:center;gap:8px;padding:3px 16px 4px;display:flex;white-space:nowrap;overflow:hidden;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.4}
+.ats-gitBranch{color:var(--dsw-alias-label-primary);flex:none}
+.ats-gitSync{flex:none;font-variant-numeric:tabular-nums}
+.ats-gitCommit{overflow:hidden;text-overflow:ellipsis;min-width:0}
+.ats-gitTime{flex:none;color:var(--dsw-alias-label-tertiary)}
 @media (hover:none){.ats-ref{opacity:1}}
 `
     const css = {
@@ -138,6 +147,15 @@ window.__ModuleLoader__.load({
       menuItem: 'ats-menuItem',
       dim: 'ats-dim',
       revealFlash: 'ats-revealFlash',
+      gitDot: 'ats-gitDot',
+      gitUntracked: 'ats-gitUntracked',
+      gitUnstaged: 'ats-gitUnstaged',
+      gitStaged: 'ats-gitStaged',
+      gitline: 'ats-gitline',
+      gitBranch: 'ats-gitBranch',
+      gitSync: 'ats-gitSync',
+      gitCommit: 'ats-gitCommit',
+      gitTime: 'ats-gitTime',
     }
 
     /** Install the stylesheet once per document; unload leaves it for the next load to reuse. */
@@ -278,6 +296,27 @@ window.__ModuleLoader__.load({
       return new Date(mtimeMs).toLocaleString()
     }
 
+    /**
+     * A commit's relative age, localized through the plugin dictionary
+     * ('just now' / 'N min ago' / …); beyond a month it falls back to the
+     * absolute date shape.
+     * @param {number} mtimeMs - epoch milliseconds.
+     * @param {(key: string, params?: Record<string, string>) => string} t - the dictionary lookup.
+     * @returns {string} the relative text.
+     */
+    function relativeAgeText(mtimeMs, t) {
+      if (typeof mtimeMs !== 'number' || !Number.isFinite(mtimeMs)) return ''
+      const seconds = Math.max(0, Math.floor((Date.now() - mtimeMs) / 1000))
+      if (seconds < 60) return t('time.now')
+      const minutes = Math.floor(seconds / 60)
+      if (minutes < 60) return t('time.minutes', { n: String(minutes) })
+      const hours = Math.floor(minutes / 60)
+      if (hours < 24) return t('time.hours', { n: String(hours) })
+      const days = Math.floor(hours / 24)
+      if (days < 30) return t('time.days', { n: String(days) })
+      return formatMtime(mtimeMs)
+    }
+
     /** `MM-DD HH:mm` in local time: the narrow-width form. */
     function formatMtimeShort(mtimeMs) {
       if (typeof mtimeMs !== 'number' || !Number.isFinite(mtimeMs)) return ''
@@ -402,6 +441,7 @@ window.__ModuleLoader__.load({
       const entry = { name, type }
       if (typeof raw.mtimeMs === 'number' && Number.isFinite(raw.mtimeMs)) entry.mtimeMs = raw.mtimeMs
       if (typeof raw.size === 'number' && Number.isFinite(raw.size)) entry.size = raw.size
+      if (raw.git === 'staged' || raw.git === 'unstaged' || raw.git === 'untracked') entry.git = raw.git
       return entry
     }
 
@@ -439,6 +479,25 @@ window.__ModuleLoader__.load({
           const value = payload.value
           const entries = Array.isArray(value?.entries) ? value.entries.map(entryOf).filter((entry) => entry !== undefined) : undefined
           if (entries === undefined) return { ok: false, error: failureOf('unavailable', 'malformed listing') }
+          // R40a: the workspace's git block rides the listing; only a well-formed
+          // `available: true` block is forwarded, everything else degrades.
+          const rawGit = value?.git
+          const git = rawGit?.available === true
+            ? {
+              available: true,
+              branch: typeof rawGit.branch === 'string' ? rawGit.branch : undefined,
+              ahead: typeof rawGit.ahead === 'number' ? rawGit.ahead : 0,
+              behind: typeof rawGit.behind === 'number' ? rawGit.behind : 0,
+              head: rawGit.head !== null && typeof rawGit.head === 'object'
+                ? {
+                  hash: typeof rawGit.head.hash === 'string' ? rawGit.head.hash : '',
+                  subject: typeof rawGit.head.subject === 'string' ? rawGit.head.subject : '',
+                  author: typeof rawGit.head.author === 'string' ? rawGit.head.author : '',
+                  time: typeof rawGit.head.time === 'number' ? rawGit.head.time : undefined,
+                }
+                : undefined,
+            }
+            : { available: false }
           return {
             ok: true,
             value: {
@@ -446,6 +505,7 @@ window.__ModuleLoader__.load({
               root: typeof value.root === 'string' ? value.root : undefined,
               entries,
               truncated: value.truncated === true,
+              git,
             },
           }
         }
@@ -927,6 +987,16 @@ window.__ModuleLoader__.load({
       const isDir = entry.type === 'directory'
       const isOpen = isDir && expanded.includes(path)
       const name = h('span', { className: css.name, key: 'name' }, entry.name)
+      // R40a: the file's work-tree state as a coloured dot right after the
+      // name; directories never carry one. The tooltip names the state.
+      const gitDot = entry.type === 'file' && entry.git !== undefined
+        ? h('span', {
+            key: 'git',
+            className: `${css.gitDot} ${css[`git${entry.git[0].toUpperCase()}${entry.git.slice(1)}`] ?? ''}`,
+            title: t(`git.${entry.git}`),
+            'data-at-sider-git': entry.git,
+          })
+        : undefined
       const children = []
       if (entry.type === 'other') {
         children.push(h('span', { className: css.main, key: 'main' }, name))
@@ -935,7 +1005,8 @@ window.__ModuleLoader__.load({
           isDir
             ? h(FolderIcon, { open: isOpen, className: css.icon })
             : h(FileIcon, { name: entry.name }),
-          name))
+          name,
+          gitDot))
         children.push(h(RefButton, {
           key: 'ref',
           sessionId,
@@ -1033,6 +1104,10 @@ window.__ModuleLoader__.load({
           if (result.ok) {
             retryCount.current = 0
             setLevel({ phase: 'ready', entries: result.value.entries, truncated: result.value.truncated })
+            // R40a: only the root level reports the workspace's git state up to
+            // the body (the header line); nested levels carry per-entry fields
+            // but say nothing about the repository.
+            if (props.parent === props.root) props.onGit?.(result.value.git ?? { available: false })
             return
           }
           // A freshly restarted Host may not have resumed this Session yet, so
@@ -1147,6 +1222,10 @@ window.__ModuleLoader__.load({
       const [query, setQuery] = React.useState('')
       const [search, setSearch] = React.useState({ phase: 'idle', results: [], truncated: false })
       const [focusedPath, setFocusedPath] = React.useState(undefined)
+      // R40a: the workspace's git state for the header line, reported by the
+      // root level after each successful read (undefined until then, and
+      // `{ available: false }` outside a repository).
+      const [gitInfo, setGitInfo] = React.useState(undefined)
       const bodyRef = React.useRef(null)
       const scrollRef = React.useRef(0)
       const searchTimer = React.useRef(0)
@@ -1276,6 +1355,7 @@ window.__ModuleLoader__.load({
         onToggle,
         onOpen,
         onReference,
+        onGit: setGitInfo,
         onTreeNav: treeKeyDown,
         focusedPath,
         setFocusedPath,
@@ -1286,6 +1366,30 @@ window.__ModuleLoader__.load({
         t,
       }
       const searching = trimmedQuery !== ''
+      // R40a: the header's git line — branch, ahead/behind, and the HEAD
+      // commit's short hash, subject, and relative age. Only rendered when the
+      // workspace answered with a repository.
+      const gitLine = gitInfo?.available === true
+        ? h('div', {
+            className: css.gitline,
+            'data-at-sider-git': 'head',
+            title: gitInfo.head === undefined
+              ? t('git.branch', { n: gitInfo.branch ?? '' })
+              : t('git.commit.title', {
+                  hash: gitInfo.head.hash,
+                  subject: gitInfo.head.subject,
+                  author: gitInfo.head.author,
+                  time: gitInfo.head.time !== undefined ? formatMtime(gitInfo.head.time) : '',
+                }),
+          },
+          h('span', { className: css.gitBranch }, `⎇ ${gitInfo.branch ?? ''}`),
+          (gitInfo.ahead > 0 || gitInfo.behind > 0) && h('span', { className: css.gitSync },
+            `${gitInfo.ahead > 0 ? `↑${String(gitInfo.ahead)}` : ''}${gitInfo.behind > 0 ? ` ↓${String(gitInfo.behind)}` : ''}`),
+          gitInfo.head !== undefined && h('span', { className: css.gitCommit },
+            `${gitInfo.head.hash} ${gitInfo.head.subject}`),
+          gitInfo.head?.time !== undefined && h('span', { className: css.gitTime }, relativeAgeText(gitInfo.head.time, t)),
+        )
+        : undefined
       return h('div', {
         className: css.root,
         'data-at-sider-state': 'tree',
@@ -1333,6 +1437,7 @@ window.__ModuleLoader__.load({
           'data-at-sider-reload': true,
           onClick: () => setRevision((value) => value + 1),
         }, h(RefreshIcon))),
+      gitLine,
       h('span', { className: css.srOnly, 'aria-live': 'polite' },
         searching && search.phase === 'ready' ? t('search.count', { n: String(search.results.length) }) : ''),
       h('div', {
@@ -1457,6 +1562,15 @@ window.__ModuleLoader__.load({
       'search.truncated': '结果太多，只显示了一部分。',
       'search.count': '找到 {n} 项',
       'tree.aria': '工作区文件树',
+      'git.staged': '已暂存（待提交）',
+      'git.unstaged': '有未暂存的修改',
+      'git.untracked': '未跟踪（Git 未纳管）',
+      'git.branch': '分支 {n}',
+      'git.commit.title': '最近提交 {hash}：{subject}（{author}，{time}）',
+      'time.now': '刚刚',
+      'time.minutes': '{n} 分钟前',
+      'time.hours': '{n} 小时前',
+      'time.days': '{n} 天前',
       'error.notFound': '这个目录不在了。可能已被移动或删除。',
       'error.notDirectory': '这不是一个目录。',
       'error.outsideWorkspace': '这个目录在工作区之外，侧栏不会读取它。',
@@ -1503,6 +1617,15 @@ window.__ModuleLoader__.load({
       'search.truncated': 'Too many results, showing only some of them.',
       'search.count': '{n} results',
       'tree.aria': 'Workspace file tree',
+      'git.staged': 'Staged (ready to commit)',
+      'git.unstaged': 'Modified (unstaged)',
+      'git.untracked': 'Untracked',
+      'git.branch': 'Branch {n}',
+      'git.commit.title': 'Last commit {hash}: {subject} ({author}, {time})',
+      'time.now': 'just now',
+      'time.minutes': '{n} min ago',
+      'time.hours': '{n} h ago',
+      'time.days': '{n} d ago',
       'error.notFound': 'That directory is gone. It may have been moved or deleted.',
       'error.notDirectory': 'That is not a directory.',
       'error.outsideWorkspace': 'That directory is outside the workspace, so the sidebar will not read it.',

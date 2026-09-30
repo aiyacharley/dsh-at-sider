@@ -17,6 +17,7 @@
  *
  * @module dsh-at-sider
  */
+import { spawn } from 'node:child_process'
 import { readdir, stat } from 'node:fs/promises'
 import { isAbsolute, join, resolve } from 'node:path'
 
@@ -233,7 +234,7 @@ async function workspaceRootOf(sessions, sessionId, getPersistence) {
 /**
  * Handle one listing request. Exported for tests; the route below is its only caller.
  * @param {Request} request - the buffered Fetch request.
- * @param {{ getSessionRoot?: (sessionId: string) => Promise<string | undefined> | string | undefined }} deps - session lookup seam.
+ * @param {{ getSessionRoot?: (sessionId: string) => Promise<string | undefined> | string | undefined, runGit?: typeof runGit }} deps - session lookup seam and an optional git runner override (tests).
  * @returns {Promise<Response>} the JSON reply.
  */
 export async function handleListRequest(request, deps) {
@@ -257,6 +258,14 @@ export async function handleListRequest(request, deps) {
   if (root === undefined) return failure('no-workspace', 'The session has no workspace directory')
   try {
     const value = await listDirectory(root, path)
+    // R40a: git state rides the listing; a failure here must never fail the
+    // listing itself.
+    try {
+      const state = await gitState(root, typeof deps.runGit === 'function' ? { runGit: deps.runGit } : {})
+      attachGitState(value, state)
+    } catch {
+      value.git = { available: false }
+    }
     return jsonReply({ ok: true, value })
   } catch (error) {
     if (error instanceof AtSiderError) return failure(error.code, error.message)
@@ -267,6 +276,201 @@ export async function handleListRequest(request, deps) {
 /** Normalize a host path for the wire: `/` separators whatever the platform uses. */
 function toSlash(path) {
   return path.replace(/\\/g, '/')
+}
+
+// ─── Git state (R40a) ────────────────────────────────────────────────────────
+// The work tree's current status (untracked / unstaged / staged) and the HEAD
+// commit, read with bounded git subprocesses and attached to the listing
+// response. Outside a repository — or without a git executable — the state is
+// `available: false` and the Client renders nothing.
+
+const GIT_TIMEOUT_MS = 3000
+const GIT_MAX_BYTES = 1_000_000
+const GIT_CACHE_TTL_MS = 30_000
+
+/**
+ * Run `git <args>` to completion with a timeout and a bounded stdout. Every
+ * failure mode (missing executable, timeout, nonzero exit) resolves instead of
+ * throwing: the caller treats the result as facts.
+ * @param {readonly string[]} args - git arguments; never shell-interpreted.
+ * @param {string} cwd - working directory for the command.
+ * @returns {Promise<{ code: number | null, stdout: string, truncated: boolean }>} the run's facts.
+ */
+function runGit(args, cwd) {
+  return new Promise((resolve) => {
+    let child
+    try {
+      child = spawn('git', args, { cwd, windowsHide: true })
+    } catch {
+      resolve({ code: null, stdout: '', truncated: false })
+      return
+    }
+    let stdout = ''
+    let truncated = false
+    let settled = false
+    const timer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      try { child.kill() } catch { /* already gone */ }
+      resolve({ code: null, stdout, truncated })
+    }, GIT_TIMEOUT_MS)
+    child.stdout?.on('data', (chunk) => {
+      if (stdout.length >= GIT_MAX_BYTES) {
+        truncated = true
+        return
+      }
+      stdout += chunk.toString('utf8')
+      if (stdout.length >= GIT_MAX_BYTES) truncated = true
+    })
+    child.on('error', () => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve({ code: null, stdout: '', truncated: false })
+    })
+    child.on('close', (code) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve({ code, stdout, truncated })
+    })
+  })
+}
+
+/**
+ * Parse `git status --porcelain=v1 -z --branch` output. Rename and copy records
+ * carry the original path as a second NUL-terminated field, which the parser
+ * must consume; paths may contain any character except NUL.
+ * @param {string} stdout - the command's stdout.
+ * @returns {{ branch: string | undefined, ahead: number, behind: number, files: Map<string, 'staged' | 'unstaged' | 'untracked'> }} the parsed status, paths relative to the repository root.
+ */
+export function parseStatus(stdout) {
+  const records = stdout.split('\0')
+  let branch
+  let ahead = 0
+  let behind = 0
+  let index = 0
+  if (records[0]?.startsWith('## ')) {
+    const line = records[0].slice(3)
+    if (line.startsWith('No commits yet on ')) {
+      branch = line.slice('No commits yet on '.length)
+    } else {
+      const dots = line.indexOf('...')
+      branch = dots === -1 ? line : line.slice(0, dots)
+      const bracket = line.match(/\[ahead (\d+)(?:, behind (\d+))?\]|\[behind (\d+)\]/)
+      if (bracket !== null) {
+        ahead = Number(bracket[1] ?? 0)
+        behind = Number(bracket[2] ?? bracket[3] ?? 0)
+      }
+    }
+    index = 1
+  }
+  const files = new Map()
+  for (; index < records.length; index += 1) {
+    const record = records[index]
+    if (record.length < 4 || record[2] !== ' ') continue
+    const x = record[0]
+    const y = record[1]
+    const path = record.slice(3)
+    let state
+    if (x === '?' && y === '?') state = 'untracked'
+    else if (x !== ' ' && x !== '?') state = 'staged'
+    else state = 'unstaged'
+    files.set(path, state)
+    // A rename/copy record's next NUL field is the original path; consume it so
+    // it is not misread as another status record.
+    if ((x === 'R' || x === 'C' || y === 'R' || y === 'C') && records[index + 1] !== undefined) index += 1
+  }
+  return { branch, ahead, behind, files }
+}
+
+/** The git facts one workspace root resolves to; cached per cwd for {@link GIT_CACHE_TTL_MS}. */
+const gitCache = new Map()
+const gitInFlight = new Map()
+
+/**
+ * Read the workspace's git state: repository location, status map, and HEAD.
+ * `status` maps repository-relative paths to their work-tree state; the caller
+ * maps them onto workspace entries with `--show-prefix`.
+ * @param {string} root - absolute workspace root.
+ * @param {{ runGit?: typeof runGit, now?: () => number }} [deps] - test seams.
+ * @returns {Promise<object>} `{ available: false }` or `{ available: true, branch, ahead, behind, head?, status }`.
+ */
+export async function gitState(root, deps = {}) {
+  const run = deps.runGit ?? runGit
+  const now = deps.now ?? Date.now
+  const key = toSlash(root)
+  const cached = gitCache.get(key)
+  if (cached !== undefined && cached.expires > now()) return cached.value
+  const inFlight = gitInFlight.get(key)
+  if (inFlight !== undefined) return inFlight
+  const task = (async () => {
+    const located = await run(['rev-parse', '--show-toplevel', '--show-prefix'], root)
+    if (located.code !== 0) return { available: false }
+    const [rootLine = '', prefixLine = ''] = located.stdout.split(/\r?\n/)
+    const prefix = prefixLine.replace(/\r$/, '')
+    const status = await run(['status', '--porcelain=v1', '-z', '--branch'], root)
+    const parsed = status.code === 0 ? parseStatus(status.stdout) : { branch: undefined, ahead: 0, behind: 0, files: new Map() }
+    const log = await run(['log', '-1', '--format=%H%x09%h%x09%at%x09%an%x09%s'], root)
+    let head
+    if (log.code === 0 && log.stdout.trim() !== '') {
+      const [fullHash = '', shortHash = '', at = '', author = '', ...subject] = log.stdout.trim().split('\t')
+      head = {
+        hash: shortHash !== '' ? shortHash : fullHash.slice(0, 7),
+        subject: subject.join('\t'),
+        author,
+        time: Number.isFinite(Number(at)) ? Number(at) * 1000 : undefined,
+      }
+    }
+    return {
+      available: true,
+      branch: parsed.branch,
+      ahead: parsed.ahead,
+      behind: parsed.behind,
+      head,
+      status: parsed.files,
+      prefix,
+    }
+  })()
+  gitInFlight.set(key, task)
+  try {
+    const value = await task
+    gitCache.set(key, { expires: now() + GIT_CACHE_TTL_MS, value })
+    return value
+  } finally {
+    gitInFlight.delete(key)
+  }
+}
+
+/**
+ * Attach the git state to a listing: the root-level block plus one `git` field
+ * per file entry whose workspace-relative path the status map covers.
+ * @param {{ path: string, root: string, entries: object[] }} value - the listing.
+ * @param {object} state - the state {@link gitState} resolved for the root.
+ * @returns {void} mutates `value` in place.
+ */
+function attachGitState(value, state) {
+  if (state.available !== true) {
+    value.git = { available: false }
+    return
+  }
+  const prefix = state.prefix ?? ''
+  const base = toSlash(value.path).startsWith(toSlash(value.root))
+    ? toSlash(value.path).slice(toSlash(value.root).length).replace(/^\/+|\/+$/g, '')
+    : ''
+  for (const entry of value.entries) {
+    if (entry.type !== 'file') continue
+    const relative = base === '' ? entry.name : `${base}/${entry.name}`
+    const state2 = state.status.get(`${prefix}${relative}`)
+    if (state2 !== undefined) entry.git = state2
+  }
+  value.git = {
+    available: true,
+    branch: state.branch,
+    ahead: state.ahead,
+    behind: state.behind,
+    head: state.head,
+  }
 }
 
 /**
@@ -409,14 +613,18 @@ export function apply(ctx) {
 /** Internals for the Host-side unit tests; not part of the plugin contract. */
 export const __internals = {
   AtSiderError,
+  attachGitState,
   compareEntries,
+  gitState,
   handleSearchRequest,
   kindOfDirent,
   listDirectory,
   mapFsError,
   mapLimit,
+  parseStatus,
   pathKey,
   resolveInsideWorkspace,
+  runGit,
   searchWorkspace,
   workspaceRootOf,
 }
